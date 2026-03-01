@@ -1,0 +1,166 @@
+{
+  "identity": {
+    "persona": "E1",
+    "mission": "Design a high-frequency, professional crypto trading terminal that prioritizes data density and clarity over decoration.",
+    "principles": [
+      "Fusion over Imitation: Mix 'Bloomberg Terminal' density with 'Linear' polish.",
+      "Data First: Every pixel must serve information. No fluff.",
+      "Contrast is King: Use neon accents only for critical signals (Profit/Loss/Alerts).",
+      "The 'Technical' Aesthetic: Visible grid lines, monospaced numbers, sharp edges."
+    ]
+  },
+  "theme": {
+    "mode": "dark",
+    "name": "Deep Obsidian Protocol",
+    "emotional_archetype": "The Performance Pro (Archetype 2) + Electric & Neon (Archetype 7)",
+    "palette": {
+      "background": {
+        "default": "#0A0A0A",
+        "paper": "#121212",
+        "subtle": "#1A1A1A"
+      },
+      "foreground": {
+        "default": "#FFFFFF",
+        "muted": "#A1A1AA",
+        "subtle": "#52525B"
+      },
+      "primary": {
+        "main": "#3B82F6",
+        "light": "#60A5FA",
+        "dark": "#2563EB",
+        "contrastText": "#FFFFFF"
+      },
+      "secondary": {
+        "main": "#8B5CF6",
+        "contrastText": "#FFFFFF"
+      },
+      "status": {
+        "success": "#00F090",
+        "error": "#FF2E5B",
+        "warning": "#F59E0B",
+        "info": "#3B82F6"
+      },
+      "border": {
+        "default": "#27272A",
+        "subtle": "#18181B",
+        "active": "#3F3F46"
+      }
+    }
+  },
+  "typography": {
+    "font_family": {
+      "sans": ["Manrope", "system-ui", "sans-serif"],
+      "mono": ["JetBrains Mono", "Menlo", "monospace"]
+    },
+    "scale": {
+      "h1": "text-4xl font-bold tracking-tight",
+      "h2": "text-3xl font-semibold tracking-tight",
+      "h3": "text-2xl font-semibold tracking-tight",
+      "body": "text-sm leading-relaxed",
+      "mono_lg": "font-mono text-lg tracking-wide",
+      "mono_base": "font-mono text-base tracking-wide",
+      "mono_sm": "font-mono text-sm tracking-wide"
+    },
+    "rules": [
+      "Use 'Manrope' for all UI labels, navigation, and headings.",
+      "Use 'JetBrains Mono' for ALL numbers, prices, hashes, and tabular data.",
+      "Headings > 32px must use 'tracking-tight'.",
+      "Overlines / Labels must be Uppercase + Tiny + Wide Spacing (tracking-[0.2em])."
+    ]
+  },
+  "layout": {
+    "grid_system": "Bento Grid Mode B (High Density)",
+    "container_width": "max-w-[1920px]",
+    "spacing": {
+      "base": "gap-4",
+      "section": "gap-6",
+      "padding": "p-4 md:p-6"
+    },
+    "strategies": [
+      "Grid Borders: Use 'border-r border-b border-white/5' to separate panels.",
+      "No Card Backgrounds: Avoid heavy card backgrounds. Use the grid itself to define structure.",
+      "Density: Use 'h-full' on children to ensure they stretch to match their neighbors.",
+      "Sticky Headers: Use 'backdrop-blur-xl' with 'border-b border-white/5' for navigation."
+    ]
+  },
+  "components": {
+    "buttons": {
+      "base": "rounded-sm font-medium transition-all duration-200",
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_15px_rgba(59,130,246,0.5)]",
+      "outline": "border border-input bg-transparent hover:bg-accent hover:text-accent-foreground",
+      "ghost": "hover:bg-accent hover:text-accent-foreground",
+      "destructive": "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+    },
+    "inputs": {
+      "base": "h-9 rounded-sm border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+      "focus": "focus:border-primary focus:ring-1 focus:ring-primary/20"
+    },
+    "cards": {
+      "base": "rounded-lg border border-border bg-card text-card-foreground shadow-sm",
+      "header": "flex flex-col space-y-1.5 p-6",
+      "content": "p-6 pt-0"
+    },
+    "tables": {
+      "base": "w-full caption-bottom text-sm",
+      "header": "border-b h-10 px-2 text-left align-middle font-medium text-muted-foreground",
+      "row": "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted h-10",
+      "cell": "p-2 align-middle font-mono text-xs md:text-sm"
+    },
+    "charts": {
+      "library": "recharts",
+      "config": {
+        "grid": { "stroke": "#333", "strokeDasharray": "3 3", "vertical": false },
+        "axis": { "stroke": "#666", "fontSize": 12, "tickLine": false, "axisLine": false },
+        "tooltip": {
+          "contentStyle": { "backgroundColor": "#0A0A0A", "borderColor": "#333", "borderRadius": "4px" },
+          "itemStyle": { "color": "#fff" }
+        }
+      }
+    }
+  },
+  "pages": {
+    "login": {
+      "layout": "Split screen. Left: 3D abstract/Texture. Right: Form.",
+      "visuals": "Use abstract cyberpunk background on left.",
+      "background_image": "https://images.unsplash.com/photo-1768330005068-e99a3204e8fe?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTB8MHwxfHNlYXJjaHw0fHxjeWJlcnB1bmslMjBhYnN0cmFjdCUyMGRpZ2l0YWwlMjBmaW5hbmNpYWwlMjBuZXR3b3JrJTIwZGFyayUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzcyMzUxMzEyfDA&ixlib=rb-4.1.0&q=85"
+    },
+    "dashboard": {
+      "layout": "Bento Grid Mode B.",
+      "sections": [
+        { "name": "Overview", "grid_area": "col-span-12 md:col-span-8 lg:col-span-9", "content": "Main Chart (PnL + Price)" },
+        { "name": "Positions", "grid_area": "col-span-12 md:col-span-4 lg:col-span-3", "content": "Active Positions List (Vertical)" },
+        { "name": "Stats", "grid_area": "col-span-12 md:col-span-12 lg:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-4", "content": "KPI Cards (Balance, PnL, Win Rate, Open Orders)" },
+        { "name": "History", "grid_area": "col-span-12", "content": "Recent Trades Table" }
+      ]
+    },
+    "history": {
+      "layout": "Full width table with filters on top.",
+      "features": ["Date Range Picker", "Export CSV", "Status Badge (Win/Loss)"]
+    },
+    "config": {
+      "layout": "Two column settings panel.",
+      "features": ["Bot Toggle (Switch)", "Risk Parameters (Inputs)", "Strategy Selection (Select)"]
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-black/40 border border-white/10",
+    "glow": "shadow-[0_0_20px_rgba(var(--primary),0.3)]",
+    "scanlines": "background: repeating-linear-gradient(0deg, rgba(0,0,0,0.2) 0px, rgba(0,0,0,0.2) 1px, transparent 1px, transparent 2px)",
+    "noise": "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E\")"
+  },
+  "universal_guidelines": [
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: 'transition: all'. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, ie do not add '.App { text-align: center; }' in the css file. This disrupts the human natural reading flow of text.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠 etc for icons. Use 'lucide-react' icons.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Main agent relies on these image URLs. Missing categories (especially sponsor logos) = main agent will use placeholder text which is FORBIDDEN.",
+    "Use 'sonner' for toasts.",
+    "Components MUST use named exports (export const ComponentName = ...).",
+    "Pages MUST use default exports (export default function PageName() {...})."
+  ]
+}
