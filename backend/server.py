@@ -1049,6 +1049,402 @@ async def get_leaderboard(user=Depends(get_current_user)):
     }
 
 # ====================================================================
+# STRATEGY BACKTESTER ENGINE
+# ====================================================================
+
+def generate_historical_candles(symbol, period_days, interval_minutes=15):
+    """Generate realistic historical OHLCV candles with trends, mean reversion, and volatility clustering."""
+    base_price = SYMBOL_PRICES.get(symbol, 1000.0)
+    candles_per_day = int(24 * 60 / interval_minutes)
+    total_candles = period_days * candles_per_day
+    
+    candles = []
+    price = base_price * random.uniform(0.85, 1.15)
+    
+    # Generate trend phases
+    trend_direction = random.choice([-1, 1])
+    trend_strength = random.uniform(0.0001, 0.0005)
+    trend_duration = random.randint(50, 200)
+    trend_counter = 0
+    
+    vol_base = base_price * 0.002
+    vol_current = vol_base
+    
+    start_time = datetime.now(timezone.utc) - timedelta(days=period_days)
+    
+    for i in range(total_candles):
+        # Regime changes
+        trend_counter += 1
+        if trend_counter >= trend_duration:
+            trend_direction = random.choice([-1, 1])
+            trend_strength = random.uniform(0.0001, 0.0008)
+            trend_duration = random.randint(30, 250)
+            trend_counter = 0
+            vol_current = vol_base * random.uniform(0.5, 2.5)
+        
+        # Volatility clustering (GARCH-like)
+        vol_current = vol_current * 0.95 + vol_base * 0.05 + abs(random.gauss(0, vol_base * 0.1))
+        
+        drift = trend_direction * trend_strength * price
+        noise = random.gauss(0, vol_current)
+        
+        # Mean reversion component
+        mean_pull = (base_price - price) * 0.0002
+        
+        open_p = price
+        close_p = open_p + drift + noise + mean_pull
+        close_p = max(close_p, base_price * 0.3)
+        
+        intra_vol = vol_current * random.uniform(0.3, 1.5)
+        high_p = max(open_p, close_p) + abs(random.gauss(0, intra_vol))
+        low_p = min(open_p, close_p) - abs(random.gauss(0, intra_vol))
+        low_p = max(low_p, base_price * 0.2)
+        
+        candle_time = start_time + timedelta(minutes=i * interval_minutes)
+        
+        candles.append({
+            "open": round(open_p, 8),
+            "high": round(high_p, 8),
+            "low": round(low_p, 8),
+            "close": round(close_p, 8),
+            "volume": round(random.uniform(500, 50000) * (1 + vol_current / vol_base), 2),
+            "time": candle_time.isoformat(),
+            "timestamp": int(candle_time.timestamp() * 1000)
+        })
+        price = close_p
+    
+    return candles
+
+def run_backtest(candles, params):
+    """Run the trading strategy against historical candles and return results."""
+    balance = params.initial_balance
+    initial_balance = balance
+    position = None
+    trades = []
+    equity_curve = []
+    peak_equity = balance
+    max_drawdown = 0
+    max_drawdown_pct = 0
+    
+    lookback = max(40, params.rsi_period + 5)
+    
+    for i in range(lookback, len(candles)):
+        window = candles[max(0, i - 60):i + 1]
+        closes = [c['close'] for c in window]
+        current_price = closes[-1]
+        current_time = candles[i]['time']
+        
+        # Track equity
+        unrealized = 0
+        if position:
+            unrealized = (current_price - position['entry']) * position['qty']
+        current_equity = balance + unrealized
+        
+        if current_equity > peak_equity:
+            peak_equity = current_equity
+        dd = peak_equity - current_equity
+        dd_pct = (dd / peak_equity * 100) if peak_equity > 0 else 0
+        if dd > max_drawdown:
+            max_drawdown = dd
+        if dd_pct > max_drawdown_pct:
+            max_drawdown_pct = dd_pct
+        
+        # Sample equity every 4 candles
+        if i % 4 == 0:
+            equity_curve.append({
+                "time": current_time,
+                "equity": round(current_equity, 2),
+                "balance": round(balance, 2),
+                "drawdown": round(dd_pct, 2)
+            })
+        
+        # Manage open position
+        if position:
+            exit_reason = None
+            exit_price = current_price
+            
+            # Check SL
+            if current_price <= position['sl']:
+                exit_reason = "STOP_LOSS"
+                exit_price = position['sl']
+            # Check TP
+            elif current_price >= position['tp']:
+                exit_reason = "TAKE_PROFIT"
+                exit_price = position['tp']
+            
+            # Trailing stop
+            if not exit_reason and position.get('trail_active'):
+                trail_dist = position['atr'] * params.trailing_stop_distance_pips
+                new_sl = current_price - trail_dist
+                if new_sl > position['sl']:
+                    position['sl'] = new_sl
+                if current_price <= position['sl']:
+                    exit_reason = "TRAIL_STOP"
+                    exit_price = position['sl']
+            
+            # Activate trailing
+            if not exit_reason and not position.get('trail_active'):
+                activation = position['entry'] + position['atr'] * params.trailing_stop_activate_pips
+                if current_price >= activation:
+                    position['trail_active'] = True
+            
+            if exit_reason:
+                pnl = (exit_price - position['entry']) * position['qty']
+                pnl_pct = ((exit_price - position['entry']) / position['entry']) * 100
+                balance += pnl
+                
+                trades.append({
+                    "entry_price": round(position['entry'], 8),
+                    "exit_price": round(exit_price, 8),
+                    "entry_time": position['entry_time'],
+                    "exit_time": current_time,
+                    "qty": position['qty'],
+                    "pnl": round(pnl, 4),
+                    "pnl_percent": round(pnl_pct, 4),
+                    "exit_reason": exit_reason,
+                    "sl": round(position['sl'], 8),
+                    "tp": round(position['tp'], 8),
+                    "hold_candles": i - position['entry_idx']
+                })
+                position = None
+            continue
+        
+        # Look for entry signal
+        if len(closes) < lookback:
+            continue
+        
+        # Technical indicators
+        fast_e = ema(closes, 5)
+        slow_e = ema(closes, 13)
+        rsi = rsi_calc(closes, params.rsi_period)
+        macd = macd_calc(closes)
+        bb = bollinger_bands(closes)
+        atr = atr_calc(window)
+        
+        if not all([fast_e, slow_e, rsi, macd, bb, atr]):
+            continue
+        if atr <= 0 or atr > current_price * 0.1:
+            continue
+        
+        # Structure (use candles a few back)
+        struct_candles = window[-10:-2]
+        if len(struct_candles) >= 2:
+            if struct_candles[-1]['high'] > struct_candles[-2]['high'] and struct_candles[-1]['low'] > struct_candles[-2]['low']:
+                trend = 'UPTREND'
+            elif struct_candles[-1]['high'] < struct_candles[-2]['high'] and struct_candles[-1]['low'] < struct_candles[-2]['low']:
+                trend = 'DOWNTREND'
+            else:
+                trend = 'RANGE'
+        else:
+            trend = 'RANGE'
+        
+        # Sweep
+        sweep = None
+        if len(window) >= 2:
+            if window[-1]['low'] < window[-2]['low'] and window[-1]['close'] > window[-2]['low']:
+                sweep = 'BUY_SWEEP'
+            elif fast_e > slow_e:
+                sweep = 'EMA_BULLISH'
+        
+        has_signal = (
+            (trend == 'UPTREND' and sweep in ['BUY_SWEEP', 'EMA_BULLISH']) or
+            (trend != 'DOWNTREND' and sweep == 'BUY_SWEEP') or
+            (fast_e > slow_e and rsi < 60 and rsi > 35)
+        )
+        
+        if not has_signal or rsi > params.rsi_overbought:
+            continue
+        
+        # Probability
+        bb_pos = (current_price - bb['middle']) / (bb['upper'] - bb['middle']) if bb['upper'] != bb['middle'] else 0
+        momentum = (fast_e - slow_e) / current_price * 100
+        z = 0.3 * momentum + 0.2 * (1 if trend == 'UPTREND' else 0.5) - 0.05 * (atr / current_price * 100) + 0.15 * (50 - abs(rsi - 50)) / 50 + 0.1 * max(-1, min(1, bb_pos)) + 0.1 * (1 if sweep == 'BUY_SWEEP' else 0.5)
+        z = max(-5, min(5, z))
+        prob = 1 / (1 + math.exp(-z))
+        
+        if prob < params.min_entry_probability:
+            continue
+        
+        # Position sizing
+        sl_price = current_price - atr * params.atr_sl_multiplier
+        tp_price = current_price + atr * params.atr_tp_multiplier
+        
+        risk_amount = balance * (params.risk_per_trade_percent / 100)
+        price_risk = abs(current_price - sl_price)
+        if price_risk <= 0:
+            continue
+        
+        qty = min(risk_amount / price_risk, params.base_usdt_per_trade / current_price)
+        if qty <= 0 or qty * current_price < 5:
+            continue
+        
+        position = {
+            'entry': current_price,
+            'sl': sl_price,
+            'tp': tp_price,
+            'qty': round(qty, 8),
+            'atr': atr,
+            'entry_time': current_time,
+            'entry_idx': i,
+            'trail_active': False,
+            'probability': prob
+        }
+    
+    # Close any remaining position at last price
+    if position:
+        last_price = candles[-1]['close']
+        pnl = (last_price - position['entry']) * position['qty']
+        pnl_pct = ((last_price - position['entry']) / position['entry']) * 100
+        balance += pnl
+        trades.append({
+            "entry_price": round(position['entry'], 8),
+            "exit_price": round(last_price, 8),
+            "entry_time": position['entry_time'],
+            "exit_time": candles[-1]['time'],
+            "qty": position['qty'],
+            "pnl": round(pnl, 4),
+            "pnl_percent": round(pnl_pct, 4),
+            "exit_reason": "END_OF_DATA",
+            "sl": round(position['sl'], 8),
+            "tp": round(position['tp'], 8),
+            "hold_candles": len(candles) - position['entry_idx']
+        })
+    
+    # Compute stats
+    total = len(trades)
+    wins = [t for t in trades if t['pnl'] > 0]
+    losses = [t for t in trades if t['pnl'] <= 0]
+    
+    total_pnl = sum(t['pnl'] for t in trades)
+    win_rate = len(wins) / total * 100 if total > 0 else 0
+    avg_win = sum(t['pnl'] for t in wins) / len(wins) if wins else 0
+    avg_loss = sum(t['pnl'] for t in losses) / len(losses) if losses else 0
+    
+    gross_profit = sum(t['pnl'] for t in wins) if wins else 0
+    gross_loss = abs(sum(t['pnl'] for t in losses)) if losses else 0
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0
+    
+    avg_hold = sum(t['hold_candles'] for t in trades) / total if total > 0 else 0
+    
+    # Sharpe-like ratio (simplified)
+    if total > 1:
+        pnl_list = [t['pnl'] for t in trades]
+        mean_pnl = sum(pnl_list) / len(pnl_list)
+        var_pnl = sum((p - mean_pnl) ** 2 for p in pnl_list) / (len(pnl_list) - 1)
+        std_pnl = math.sqrt(var_pnl) if var_pnl > 0 else 0
+        sharpe = round(mean_pnl / std_pnl * math.sqrt(252) if std_pnl > 0 else 0, 2)
+    else:
+        sharpe = 0
+    
+    # Expectancy
+    expectancy = (win_rate / 100 * avg_win + (1 - win_rate / 100) * avg_loss) if total > 0 else 0
+    
+    # Win/Loss streaks
+    best_win_streak = 0
+    worst_loss_streak = 0
+    tw, tl = 0, 0
+    for t in trades:
+        if t['pnl'] > 0:
+            tw += 1
+            tl = 0
+            best_win_streak = max(best_win_streak, tw)
+        else:
+            tl += 1
+            tw = 0
+            worst_loss_streak = max(worst_loss_streak, tl)
+    
+    # Monthly PnL breakdown
+    monthly = {}
+    for t in trades:
+        try:
+            dt = datetime.fromisoformat(t['exit_time'].replace("Z", "+00:00"))
+            mk = dt.strftime("%Y-%m")
+            if mk not in monthly:
+                monthly[mk] = {"month": mk, "pnl": 0, "trades": 0, "wins": 0}
+            monthly[mk]["pnl"] = round(monthly[mk]["pnl"] + t['pnl'], 4)
+            monthly[mk]["trades"] += 1
+            if t['pnl'] > 0:
+                monthly[mk]["wins"] += 1
+        except Exception:
+            pass
+    
+    # Exit reason breakdown
+    exit_breakdown = {}
+    for t in trades:
+        r = t['exit_reason']
+        if r not in exit_breakdown:
+            exit_breakdown[r] = {"reason": r, "count": 0, "pnl": 0, "wins": 0}
+        exit_breakdown[r]["count"] += 1
+        exit_breakdown[r]["pnl"] = round(exit_breakdown[r]["pnl"] + t['pnl'], 4)
+        if t['pnl'] > 0:
+            exit_breakdown[r]["wins"] += 1
+    
+    return {
+        "summary": {
+            "total_trades": total,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(win_rate, 2),
+            "total_pnl": round(total_pnl, 4),
+            "total_pnl_percent": round((balance - initial_balance) / initial_balance * 100, 2),
+            "final_balance": round(balance, 2),
+            "initial_balance": round(initial_balance, 2),
+            "avg_win": round(avg_win, 4),
+            "avg_loss": round(avg_loss, 4),
+            "profit_factor": profit_factor,
+            "max_drawdown": round(max_drawdown, 4),
+            "max_drawdown_pct": round(max_drawdown_pct, 2),
+            "sharpe_ratio": sharpe,
+            "expectancy": round(expectancy, 4),
+            "avg_hold_candles": round(avg_hold, 1),
+            "best_win_streak": best_win_streak,
+            "worst_loss_streak": worst_loss_streak,
+        },
+        "trades": trades[-200:],
+        "equity_curve": equity_curve,
+        "monthly_pnl": sorted(monthly.values(), key=lambda x: x["month"]),
+        "exit_breakdown": list(exit_breakdown.values()),
+        "candle_count": len(candles),
+        "price_range": {
+            "start": round(candles[0]['close'], 2) if candles else 0,
+            "end": round(candles[-1]['close'], 2) if candles else 0,
+            "high": round(max(c['high'] for c in candles), 2) if candles else 0,
+            "low": round(min(c['low'] for c in candles), 2) if candles else 0
+        }
+    }
+
+@api_router.post("/backtest")
+async def run_backtest_api(params: BacktestRequest, user=Depends(get_current_user)):
+    if params.symbol not in VALID_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Invalid symbol. Choose from: {VALID_SYMBOLS}")
+    if params.period_days < 7 or params.period_days > 365:
+        raise HTTPException(status_code=400, detail="Period must be between 7 and 365 days")
+    
+    candles = generate_historical_candles(params.symbol, params.period_days)
+    result = run_backtest(candles, params)
+    
+    # Store backtest result
+    backtest_doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "symbol": params.symbol,
+        "params": params.model_dump(),
+        "summary": result["summary"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.backtests.insert_one(backtest_doc)
+    
+    result["backtest_id"] = backtest_doc["id"]
+    return result
+
+@api_router.get("/backtests")
+async def get_backtest_history(user=Depends(get_current_user)):
+    backtests = await db.backtests.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).limit(20).to_list(20)
+    return backtests
+
+# ====================================================================
 # PRICES API
 # ====================================================================
 
