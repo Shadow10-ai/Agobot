@@ -140,6 +140,11 @@ class AgoBacktesterTester:
             print(f"      Max Drawdown: {summary.get('max_drawdown_pct')}%")
             print(f"      Profit Factor: {summary.get('profit_factor')}")
             print(f"      Sharpe Ratio: {summary.get('sharpe_ratio')}")
+            # NEW: Robustness metrics
+            print(f"      Total Fees: ${summary.get('total_fees', 0):.4f}")
+            print(f"      Total Slippage: ${summary.get('total_slippage', 0):.4f}")
+            print(f"      Volume Filter Rejects: {summary.get('signals_rejected_volume', 0)}")
+            print(f"      Regime Adjustments: {summary.get('signals_rejected_regime', 0)}")
             print(f"      Equity Curve Points: {len(response.get('equity_curve', []))}")
             print(f"      Trade Details: {len(response.get('trades', []))}")
             
