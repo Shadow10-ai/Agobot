@@ -272,6 +272,110 @@ def bollinger_bands(closes, period=20, std_dev=2):
     return {"upper": mean + std * std_dev, "middle": mean, "lower": mean - std * std_dev}
 
 # ====================================================================
+# ADVANCED FILTERS: Volume, Volatility Regime, Correlation
+# ====================================================================
+
+def volume_filter(candles, multiplier=1.5):
+    """Check if recent volume exceeds average by multiplier. Low volume = fake signal."""
+    if not candles or len(candles) < 20:
+        return True, 1.0
+    volumes = [c['volume'] for c in candles[-20:]]
+    avg_vol = sum(volumes[:-1]) / len(volumes[:-1]) if len(volumes) > 1 else 1
+    current_vol = volumes[-1]
+    if avg_vol <= 0:
+        return True, 1.0
+    vol_ratio = current_vol / avg_vol
+    passes = vol_ratio >= multiplier
+    return passes, round(vol_ratio, 2)
+
+def volatility_regime(candles, period=14, lookback=100):
+    """Detect if market is in high/low volatility regime using ATR percentile."""
+    if not candles or len(candles) < lookback + period:
+        return "NORMAL", 50.0, 1.0
+    
+    # Calculate rolling ATR values
+    atr_values = []
+    for i in range(period + 1, min(len(candles), lookback + period + 1)):
+        window = candles[max(0, i - period - 1):i]
+        a = atr_calc(window, period)
+        if a and a > 0:
+            atr_values.append(a)
+    
+    if len(atr_values) < 10:
+        return "NORMAL", 50.0, 1.0
+    
+    current_atr = atr_values[-1] if atr_values else 0
+    sorted_atrs = sorted(atr_values)
+    percentile = sorted_atrs.index(min(sorted_atrs, key=lambda x: abs(x - current_atr))) / len(sorted_atrs) * 100
+    
+    if percentile >= 80:
+        regime = "HIGH_VOL"
+        size_mult = 0.5  # Reduce size in high vol
+    elif percentile <= 20:
+        regime = "LOW_VOL"
+        size_mult = 0.7  # Cautious in low vol (breakout traps)
+    else:
+        regime = "NORMAL"
+        size_mult = 1.0
+    
+    return regime, round(percentile, 1), round(size_mult, 2)
+
+# Correlation groups for crypto
+CORRELATION_GROUPS = {
+    "BTC_ECOSYSTEM": ["BTCUSDT"],
+    "ETH_ECOSYSTEM": ["ETHUSDT"],
+    "ALT_LAYER1": ["SOLUSDT", "AVAXUSDT", "ADAUSDT"],
+    "EXCHANGE": ["BNBUSDT"],
+    "MEME": ["DOGEUSDT"],
+    "PAYMENT": ["XRPUSDT"],
+}
+
+def get_correlation_group(symbol):
+    for group, symbols in CORRELATION_GROUPS.items():
+        if symbol in symbols:
+            return group
+    return symbol
+
+async def check_correlation_exposure(symbol, db_ref):
+    """Check if we're already exposed to correlated assets."""
+    target_group = get_correlation_group(symbol)
+    open_positions = await db_ref.positions.find({"status": "OPEN"}, {"_id": 0, "symbol": 1}).to_list(20)
+    
+    correlated_count = 0
+    total_open = len(open_positions)
+    for pos in open_positions:
+        if get_correlation_group(pos["symbol"]) == target_group:
+            correlated_count += 1
+    
+    # Max 1 position per correlation group, max 3 total
+    can_open = correlated_count == 0 and total_open < 3
+    exposure_pct = round(correlated_count / max(total_open, 1) * 100, 1) if total_open > 0 else 0
+    
+    return can_open, {
+        "group": target_group,
+        "correlated_positions": correlated_count,
+        "total_positions": total_open,
+        "exposure_pct": exposure_pct
+    }
+
+def structure_stop_loss(candles, side='LONG', atr=None, buffer_atr_mult=0.3):
+    """Place SL below nearest swing low instead of arbitrary ATR level."""
+    if not candles or len(candles) < 5:
+        return None
+    
+    # Find recent swing lows (last 10 candles)
+    lows = [c['low'] for c in candles[-10:]]
+    swing_low = min(lows)
+    
+    if atr and atr > 0:
+        # Add buffer below swing low
+        sl = swing_low - (atr * buffer_atr_mult)
+    else:
+        sl = swing_low * 0.998
+    
+    return max(sl, 0)
+
+# ====================================================================
 # SIMULATED PRICE GENERATION
 # ====================================================================
 
