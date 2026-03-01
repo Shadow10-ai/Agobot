@@ -5,6 +5,7 @@ import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import TradesPage from "@/pages/TradesPage";
 import ConfigPage from "@/pages/ConfigPage";
+import LeaderboardPage from "@/pages/LeaderboardPage";
 import { Toaster } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
