@@ -418,6 +418,12 @@ def calculate_signal(symbol):
     if not all([fast_ema, slow_ema, rsi, macd, bb, atr]):
         return None
     
+    # NEW: Volume filter — reject low volume signals
+    vol_passes, vol_ratio = volume_filter(candles, multiplier=1.2)
+    
+    # NEW: Volatility regime detection
+    regime, vol_percentile, regime_size_mult = volatility_regime(candles)
+    
     # Multi-timeframe structure check (use earlier candles for structure)
     structure_candles = candles[-10:-2]
     if len(structure_candles) >= 2:
@@ -434,7 +440,6 @@ def calculate_signal(symbol):
     sweep_signal = None
     if candles[-1]['low'] < candles[-2]['low'] and candles[-1]['close'] > candles[-2]['low']:
         sweep_signal = 'BUY_SWEEP'
-    # Also check if EMA crossover is bullish
     elif fast_ema > slow_ema:
         sweep_signal = 'EMA_BULLISH'
     
@@ -451,16 +456,28 @@ def calculate_signal(symbol):
     if rsi > 70:
         return None
     
-    # Probability calculation
+    # Probability calculation — now includes volume and regime factors
     bb_pos = (current_price - bb['middle']) / (bb['upper'] - bb['middle']) if bb['upper'] != bb['middle'] else 0
     momentum = (fast_ema - slow_ema) / current_price * 100
-    z = 0.3 * momentum + 0.2 * (1 if trend == 'UPTREND' else 0.5) - 0.05 * (atr / current_price * 100) + 0.15 * (50 - abs(rsi - 50)) / 50 + 0.1 * max(-1, min(1, bb_pos)) + 0.1 * (1 if sweep_signal == 'BUY_SWEEP' else 0.5)
+    vol_bonus = min(0.15, (vol_ratio - 1) * 0.1) if vol_passes else -0.1
+    regime_penalty = -0.1 if regime == 'HIGH_VOL' else (0.05 if regime == 'NORMAL' else -0.05)
+    
+    z = (0.25 * momentum + 0.15 * (1 if trend == 'UPTREND' else 0.5) 
+         - 0.05 * (atr / current_price * 100) 
+         + 0.12 * (50 - abs(rsi - 50)) / 50 
+         + 0.08 * max(-1, min(1, bb_pos)) 
+         + 0.1 * (1 if sweep_signal == 'BUY_SWEEP' else 0.5)
+         + 0.15 * vol_bonus
+         + 0.1 * regime_penalty)
     z = max(-5, min(5, z))
     prob = 1 / (1 + math.exp(-z))
     
+    # Structure-based stop loss
+    struct_sl = structure_stop_loss(candles, 'LONG', atr)
     sl_distance = atr * 1.2
+    # Use the tighter of structure SL and ATR SL
+    sl = max(struct_sl, current_price - sl_distance) if struct_sl else current_price - sl_distance
     tp_distance = atr * 2.4
-    sl = current_price - sl_distance
     tp = current_price + tp_distance
     
     return {
@@ -474,6 +491,11 @@ def calculate_signal(symbol):
         "trend": trend,
         "sl": sl,
         "tp": tp,
+        "volume_ratio": vol_ratio,
+        "volume_passes": vol_passes,
+        "volatility_regime": regime,
+        "volatility_percentile": vol_percentile,
+        "regime_size_multiplier": regime_size_mult,
         "indicators": {
             "ema_fast": fast_ema,
             "ema_slow": slow_ema,
@@ -484,7 +506,10 @@ def calculate_signal(symbol):
             "bb_upper": round(bb['upper'], 6),
             "bb_middle": round(bb['middle'], 6),
             "bb_lower": round(bb['lower'], 6),
-            "atr": round(atr, 6)
+            "atr": round(atr, 6),
+            "volume_ratio": vol_ratio,
+            "vol_regime": regime,
+            "vol_percentile": vol_percentile
         }
     }
 
