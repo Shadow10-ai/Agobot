@@ -49,7 +49,7 @@ export default function LoginPage({ onLogin }) {
               <TrendingUp className="w-5 h-5 text-white" />
             </div>
             <span className="text-2xl font-bold tracking-tight text-white">
-              CryptoBot
+              AgoBot
             </span>
           </div>
           <h1 className="text-4xl font-bold tracking-tight text-white mb-4">
@@ -91,7 +91,7 @@ export default function LoginPage({ onLogin }) {
             <div className="w-9 h-9 rounded-sm bg-blue-500 flex items-center justify-center">
               <TrendingUp className="w-4 h-4 text-white" />
             </div>
-            <span className="text-xl font-bold tracking-tight">CryptoBot</span>
+            <span className="text-xl font-bold tracking-tight">AgoBot</span>
           </div>
 
           <h2 className="text-3xl font-bold tracking-tight mb-2">
