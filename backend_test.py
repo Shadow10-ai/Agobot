@@ -135,6 +135,174 @@ class AgoBacktesterTester:
                 
             print(f"   ✅ Backtest completed:")
             print(f"      Total Trades: {summary.get('total_trades')}")
+    def test_strategy_comparison_api(self):
+        """Test the NEW strategy comparison functionality"""
+        print("\n🆚 Testing Strategy Comparison API...")
+        
+        # Define two different strategies for comparison
+        conservative_strategy = {
+            "symbol": "BTCUSDT",
+            "period_days": 30,
+            "base_usdt_per_trade": 30.0,
+            "risk_per_trade_percent": 0.3,
+            "min_entry_probability": 0.6,
+            "rsi_overbought": 65.0,
+            "rsi_oversold": 35.0,
+            "atr_sl_multiplier": 1.5,
+            "atr_tp_multiplier": 3.0,
+            "trailing_stop_activate_pips": 3.0,
+            "trailing_stop_distance_pips": 1.5,
+            "initial_balance": 10000.0,
+            "slippage_pct": 0.05,
+            "fee_pct": 0.1,
+            "volume_filter_multiplier": 2.0,
+            "volatility_regime_enabled": True,
+            "volatility_reduce_factor": 0.3,
+            "label": "Conservative"
+        }
+        
+        aggressive_strategy = {
+            "symbol": "BTCUSDT", 
+            "period_days": 30,
+            "base_usdt_per_trade": 80.0,
+            "risk_per_trade_percent": 1.0,
+            "min_entry_probability": 0.35,
+            "rsi_overbought": 75.0,
+            "rsi_oversold": 25.0,
+            "atr_sl_multiplier": 1.0,
+            "atr_tp_multiplier": 2.0,
+            "trailing_stop_activate_pips": 1.8,
+            "trailing_stop_distance_pips": 0.8,
+            "initial_balance": 10000.0,
+            "slippage_pct": 0.05,
+            "fee_pct": 0.1,
+            "volume_filter_multiplier": 1.0,
+            "volatility_regime_enabled": False,
+            "volatility_reduce_factor": 1.0,
+            "label": "Aggressive"
+        }
+        
+        compare_params = {
+            "symbol": "BTCUSDT",
+            "period_days": 30,
+            "strategy_a": conservative_strategy,
+            "strategy_b": aggressive_strategy
+        }
+        
+        success, response = self.run_test(
+            "Strategy Comparison: Conservative vs Aggressive",
+            "POST",
+            "backtest/compare",
+            200,
+            data=compare_params
+        )
+        
+        if success:
+            # Verify comparison response structure
+            required_fields = ['overall_winner', 'a_wins', 'b_wins', 'strategy_a', 'strategy_b', 'comparison', 'candle_count']
+            missing_fields = [f for f in required_fields if f not in response]
+            if missing_fields:
+                print(f"   ❌ Missing required comparison fields: {missing_fields}")
+                return False
+            
+            # Check strategy results
+            strategy_a = response.get('strategy_a', {})
+            strategy_b = response.get('strategy_b', {})
+            
+            for strategy_key, strategy_data in [('A', strategy_a), ('B', strategy_b)]:
+                if 'summary' not in strategy_data:
+                    print(f"   ❌ Missing summary in strategy {strategy_key}")
+                    return False
+                    
+                summary = strategy_data['summary']
+                required_summary_fields = [
+                    'total_trades', 'win_rate', 'total_pnl', 'total_fees', 'total_slippage',
+                    'signals_rejected_volume', 'signals_rejected_regime'
+                ]
+                missing_summary = [f for f in required_summary_fields if f not in summary]
+                if missing_summary:
+                    print(f"   ❌ Missing summary fields in strategy {strategy_key}: {missing_summary}")
+                    return False
+            
+            print(f"   ✅ Strategy Comparison completed:")
+            print(f"      Winner: {response.get('overall_winner')}")
+            print(f"      Metric wins: A={response.get('a_wins')}, B={response.get('b_wins')}")
+            print(f"      Candles analyzed: {response.get('candle_count')}")
+            
+            # Display strategy results
+            sa_summary = strategy_a.get('summary', {})
+            sb_summary = strategy_b.get('summary', {})
+            print(f"      Strategy A (Conservative): {sa_summary.get('total_trades', 0)} trades, ${sa_summary.get('total_pnl', 0):.2f} PnL")
+            print(f"      Strategy B (Aggressive): {sb_summary.get('total_trades', 0)} trades, ${sb_summary.get('total_pnl', 0):.2f} PnL")
+            
+            # Check comparison metrics
+            comparison = response.get('comparison', {})
+            print(f"      Comparison metrics available: {list(comparison.keys())}")
+            
+            return True
+        return False
+    
+    def test_robustness_parameters(self):
+        """Test specific robustness parameter variations"""
+        print("\n🛡️ Testing Robustness Parameter Variations...")
+        
+        # Test with volume filter disabled
+        no_vol_filter = {
+            "symbol": "ETHUSDT",
+            "period_days": 15,
+            "initial_balance": 5000.0,
+            "volume_filter_multiplier": 0.1,  # Very low = accept all volumes
+            "volatility_regime_enabled": False,
+            "slippage_pct": 0.0,
+            "fee_pct": 0.0,
+            "min_entry_probability": 0.3
+        }
+        
+        success, response = self.run_test(
+            "Backtest with minimal robustness filters",
+            "POST", 
+            "backtest",
+            200,
+            data=no_vol_filter
+        )
+        
+        if success:
+            summary = response.get('summary', {})
+            print(f"   ✅ No filters: {summary.get('total_trades', 0)} trades, ${summary.get('total_pnl', 0):.2f} PnL")
+            print(f"      Volume rejects: {summary.get('signals_rejected_volume', 0)}")
+            print(f"      Regime rejects: {summary.get('signals_rejected_regime', 0)}")
+        
+        # Test with maximum robustness
+        max_robust = {
+            "symbol": "ETHUSDT",
+            "period_days": 15,
+            "initial_balance": 5000.0,
+            "volume_filter_multiplier": 3.0,  # High filter
+            "volatility_regime_enabled": True,
+            "volatility_reduce_factor": 0.2,   # Aggressive reduction
+            "slippage_pct": 0.15,  # High slippage
+            "fee_pct": 0.25,       # High fees
+            "min_entry_probability": 0.7  # Very selective
+        }
+        
+        success, response = self.run_test(
+            "Backtest with maximum robustness filters",
+            "POST",
+            "backtest", 
+            200,
+            data=max_robust
+        )
+        
+        if success:
+            summary = response.get('summary', {})
+            print(f"   ✅ Max filters: {summary.get('total_trades', 0)} trades, ${summary.get('total_pnl', 0):.2f} PnL")
+            print(f"      Total fees: ${summary.get('total_fees', 0):.2f}")
+            print(f"      Total slippage: ${summary.get('total_slippage', 0):.2f}")
+            print(f"      Volume rejects: {summary.get('signals_rejected_volume', 0)}")
+            print(f"      Regime rejects: {summary.get('signals_rejected_regime', 0)}")
+            
+            return True
+        return False
             print(f"      Win Rate: {summary.get('win_rate')}%")
             print(f"      Total PnL: ${summary.get('total_pnl')}")
             print(f"      Max Drawdown: {summary.get('max_drawdown_pct')}%")
