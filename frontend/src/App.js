@@ -107,6 +107,14 @@ function App() {
             }
           />
           <Route
+            path="/compare"
+            element={
+              <ProtectedRoute>
+                <ComparePage user={user} onLogout={handleLogout} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/config"
             element={
               <ProtectedRoute>
