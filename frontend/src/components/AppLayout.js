@@ -10,6 +10,7 @@ import {
   X,
   Trophy,
   FlaskConical,
+  GitCompareArrows,
 } from "lucide-react";
 
 const navItems = [
@@ -17,6 +18,7 @@ const navItems = [
   { path: "/trades", icon: History, label: "Trade History" },
   { path: "/leaderboard", icon: Trophy, label: "Leaderboard" },
   { path: "/backtester", icon: FlaskConical, label: "Backtester" },
+  { path: "/compare", icon: GitCompareArrows, label: "Compare" },
   { path: "/config", icon: Settings, label: "Configuration" },
 ];
 
