@@ -833,6 +833,207 @@ async def get_performance(user=Depends(get_current_user)):
     }
 
 # ====================================================================
+# LEADERBOARD / PERFORMANCE RANKINGS API
+# ====================================================================
+
+@api_router.get("/leaderboard")
+async def get_leaderboard(user=Depends(get_current_user)):
+    trades = await db.trades.find({}, {"_id": 0}).sort("closed_at", 1).to_list(5000)
+    
+    if not trades:
+        return {
+            "symbol_rankings": [],
+            "best_trades": [],
+            "worst_trades": [],
+            "streaks": {"current": 0, "current_type": "none", "best_win": 0, "worst_loss": 0},
+            "time_analysis": {"best_hour": None, "worst_hour": None, "hourly_pnl": []},
+            "exit_analysis": [],
+            "weekly_pnl": [],
+            "risk_reward_avg": 0,
+            "total_fees_saved_dry": 0,
+            "consistency_score": 0
+        }
+    
+    # 1. Symbol Rankings (sorted by total PnL)
+    by_symbol = {}
+    for t in trades:
+        s = t["symbol"]
+        if s not in by_symbol:
+            by_symbol[s] = {
+                "symbol": s, "trades": 0, "pnl": 0, "wins": 0, "losses": 0,
+                "best_trade": 0, "worst_trade": 0, "avg_pnl": 0,
+                "avg_hold_time_min": 0, "total_hold_time": 0
+            }
+        by_symbol[s]["trades"] += 1
+        pnl = t.get("pnl", 0)
+        by_symbol[s]["pnl"] = round(by_symbol[s]["pnl"] + pnl, 4)
+        if pnl > 0:
+            by_symbol[s]["wins"] += 1
+        else:
+            by_symbol[s]["losses"] += 1
+        if pnl > by_symbol[s]["best_trade"]:
+            by_symbol[s]["best_trade"] = round(pnl, 4)
+        if pnl < by_symbol[s]["worst_trade"]:
+            by_symbol[s]["worst_trade"] = round(pnl, 4)
+        
+        # Hold time
+        if t.get("opened_at") and t.get("closed_at"):
+            try:
+                opened = datetime.fromisoformat(t["opened_at"].replace("Z", "+00:00"))
+                closed = datetime.fromisoformat(t["closed_at"].replace("Z", "+00:00"))
+                hold_min = (closed - opened).total_seconds() / 60
+                by_symbol[s]["total_hold_time"] += hold_min
+            except Exception:
+                pass
+    
+    for s in by_symbol.values():
+        s["win_rate"] = round(s["wins"] / s["trades"] * 100, 1) if s["trades"] > 0 else 0
+        s["avg_pnl"] = round(s["pnl"] / s["trades"], 4) if s["trades"] > 0 else 0
+        s["avg_hold_time_min"] = round(s["total_hold_time"] / s["trades"], 1) if s["trades"] > 0 else 0
+        s.pop("total_hold_time", None)
+    
+    symbol_rankings = sorted(by_symbol.values(), key=lambda x: x["pnl"], reverse=True)
+    
+    # Assign rank & medal
+    for i, sr in enumerate(symbol_rankings):
+        sr["rank"] = i + 1
+    
+    # 2. Best & Worst Trades
+    sorted_by_pnl = sorted(trades, key=lambda x: x.get("pnl", 0), reverse=True)
+    best_trades = [{
+        "symbol": t["symbol"], "pnl": round(t.get("pnl", 0), 4),
+        "pnl_percent": round(t.get("pnl_percent", 0), 2),
+        "entry_price": t.get("entry_price", 0), "exit_price": t.get("exit_price", 0),
+        "exit_reason": t.get("exit_reason", ""), "closed_at": t.get("closed_at", "")
+    } for t in sorted_by_pnl[:5]]
+    
+    worst_trades = [{
+        "symbol": t["symbol"], "pnl": round(t.get("pnl", 0), 4),
+        "pnl_percent": round(t.get("pnl_percent", 0), 2),
+        "entry_price": t.get("entry_price", 0), "exit_price": t.get("exit_price", 0),
+        "exit_reason": t.get("exit_reason", ""), "closed_at": t.get("closed_at", "")
+    } for t in sorted_by_pnl[-5:][::-1]]
+    
+    # 3. Streaks
+    current_streak = 0
+    current_type = "none"
+    best_win_streak = 0
+    worst_loss_streak = 0
+    temp_win = 0
+    temp_loss = 0
+    
+    for t in trades:
+        if t.get("pnl", 0) > 0:
+            temp_win += 1
+            temp_loss = 0
+            if temp_win > best_win_streak:
+                best_win_streak = temp_win
+        else:
+            temp_loss += 1
+            temp_win = 0
+            if temp_loss > worst_loss_streak:
+                worst_loss_streak = temp_loss
+    
+    # Current streak from end
+    for t in reversed(trades):
+        if not current_type or current_type == "none":
+            current_type = "win" if t.get("pnl", 0) > 0 else "loss"
+            current_streak = 1
+        elif (current_type == "win" and t.get("pnl", 0) > 0) or (current_type == "loss" and t.get("pnl", 0) <= 0):
+            current_streak += 1
+        else:
+            break
+    
+    # 4. Time Analysis (by hour)
+    hourly = {}
+    for t in trades:
+        if t.get("closed_at"):
+            try:
+                closed = datetime.fromisoformat(t["closed_at"].replace("Z", "+00:00"))
+                hour = closed.hour
+                if hour not in hourly:
+                    hourly[hour] = {"hour": hour, "pnl": 0, "trades": 0, "wins": 0}
+                hourly[hour]["pnl"] = round(hourly[hour]["pnl"] + t.get("pnl", 0), 4)
+                hourly[hour]["trades"] += 1
+                if t.get("pnl", 0) > 0:
+                    hourly[hour]["wins"] += 1
+            except Exception:
+                pass
+    
+    hourly_list = sorted(hourly.values(), key=lambda x: x["hour"])
+    best_hour = max(hourly.values(), key=lambda x: x["pnl"]) if hourly else None
+    worst_hour = min(hourly.values(), key=lambda x: x["pnl"]) if hourly else None
+    
+    # 5. Exit Reason Analysis
+    exit_stats = {}
+    for t in trades:
+        reason = t.get("exit_reason", "UNKNOWN")
+        if reason not in exit_stats:
+            exit_stats[reason] = {"reason": reason, "count": 0, "pnl": 0, "wins": 0}
+        exit_stats[reason]["count"] += 1
+        exit_stats[reason]["pnl"] = round(exit_stats[reason]["pnl"] + t.get("pnl", 0), 4)
+        if t.get("pnl", 0) > 0:
+            exit_stats[reason]["wins"] += 1
+    
+    for e in exit_stats.values():
+        e["win_rate"] = round(e["wins"] / e["count"] * 100, 1) if e["count"] > 0 else 0
+        e["avg_pnl"] = round(e["pnl"] / e["count"], 4) if e["count"] > 0 else 0
+    
+    # 6. Weekly PnL
+    weekly = {}
+    for t in trades:
+        if t.get("closed_at"):
+            try:
+                closed = datetime.fromisoformat(t["closed_at"].replace("Z", "+00:00"))
+                week_key = closed.strftime("%Y-W%W")
+                if week_key not in weekly:
+                    weekly[week_key] = {"week": week_key, "pnl": 0, "trades": 0, "wins": 0}
+                weekly[week_key]["pnl"] = round(weekly[week_key]["pnl"] + t.get("pnl", 0), 4)
+                weekly[week_key]["trades"] += 1
+                if t.get("pnl", 0) > 0:
+                    weekly[week_key]["wins"] += 1
+            except Exception:
+                pass
+    
+    weekly_list = sorted(weekly.values(), key=lambda x: x["week"])
+    
+    # 7. Risk/Reward & Consistency
+    rr_ratios = []
+    for t in trades:
+        if t.get("pnl", 0) > 0 and t.get("stop_loss") and t.get("entry_price"):
+            risk = abs(t["entry_price"] - t["stop_loss"]) * t.get("quantity", 0)
+            if risk > 0:
+                rr_ratios.append(t["pnl"] / risk)
+    
+    avg_rr = round(sum(rr_ratios) / len(rr_ratios), 2) if rr_ratios else 0
+    
+    # Consistency: % of profitable weeks
+    profitable_weeks = len([w for w in weekly.values() if w["pnl"] > 0])
+    total_weeks = len(weekly)
+    consistency = round(profitable_weeks / total_weeks * 100, 1) if total_weeks > 0 else 0
+    
+    return {
+        "symbol_rankings": symbol_rankings,
+        "best_trades": best_trades,
+        "worst_trades": worst_trades,
+        "streaks": {
+            "current": current_streak,
+            "current_type": current_type,
+            "best_win": best_win_streak,
+            "worst_loss": worst_loss_streak
+        },
+        "time_analysis": {
+            "best_hour": best_hour,
+            "worst_hour": worst_hour,
+            "hourly_pnl": hourly_list
+        },
+        "exit_analysis": list(exit_stats.values()),
+        "weekly_pnl": weekly_list,
+        "risk_reward_avg": avg_rr,
+        "consistency_score": consistency
+    }
+
+# ====================================================================
 # PRICES API
 # ====================================================================
 
