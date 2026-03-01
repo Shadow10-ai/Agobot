@@ -1275,7 +1275,7 @@ def generate_historical_candles(symbol, period_days, interval_minutes=15):
     return candles
 
 def run_backtest(candles, params):
-    """Run the trading strategy against historical candles and return results."""
+    """Run the trading strategy against historical candles with slippage, fees, volume filter, and volatility regime."""
     balance = params.initial_balance
     initial_balance = balance
     position = None
@@ -1284,8 +1284,20 @@ def run_backtest(candles, params):
     peak_equity = balance
     max_drawdown = 0
     max_drawdown_pct = 0
+    total_fees = 0
+    total_slippage = 0
+    signals_rejected_volume = 0
+    signals_rejected_regime = 0
+    regime_changes = []
+    
+    slippage_pct = getattr(params, 'slippage_pct', 0.05) / 100
+    fee_pct = getattr(params, 'fee_pct', 0.1) / 100
+    vol_filter_mult = getattr(params, 'volume_filter_multiplier', 1.5)
+    vol_regime_enabled = getattr(params, 'volatility_regime_enabled', True)
+    vol_reduce_factor = getattr(params, 'volatility_reduce_factor', 0.5)
     
     lookback = max(40, params.rsi_period + 5)
+    prev_regime = "NORMAL"
     
     for i in range(lookback, len(candles)):
         window = candles[max(0, i - 60):i + 1]
@@ -1308,13 +1320,23 @@ def run_backtest(candles, params):
         if dd_pct > max_drawdown_pct:
             max_drawdown_pct = dd_pct
         
+        # Volatility regime tracking
+        if vol_regime_enabled and len(candles[:i+1]) > 120:
+            regime, vol_pctl, regime_mult = volatility_regime(candles[:i+1])
+            if regime != prev_regime:
+                regime_changes.append({"time": current_time, "from": prev_regime, "to": regime, "percentile": vol_pctl})
+                prev_regime = regime
+        else:
+            regime, vol_pctl, regime_mult = "NORMAL", 50.0, 1.0
+        
         # Sample equity every 4 candles
         if i % 4 == 0:
             equity_curve.append({
                 "time": current_time,
                 "equity": round(current_equity, 2),
                 "balance": round(balance, 2),
-                "drawdown": round(dd_pct, 2)
+                "drawdown": round(dd_pct, 2),
+                "regime": regime
             })
         
         # Manage open position
@@ -1322,16 +1344,13 @@ def run_backtest(candles, params):
             exit_reason = None
             exit_price = current_price
             
-            # Check SL
             if current_price <= position['sl']:
                 exit_reason = "STOP_LOSS"
                 exit_price = position['sl']
-            # Check TP
             elif current_price >= position['tp']:
                 exit_reason = "TAKE_PROFIT"
                 exit_price = position['tp']
             
-            # Trailing stop
             if not exit_reason and position.get('trail_active'):
                 trail_dist = position['atr'] * params.trailing_stop_distance_pips
                 new_sl = current_price - trail_dist
@@ -1341,14 +1360,25 @@ def run_backtest(candles, params):
                     exit_reason = "TRAIL_STOP"
                     exit_price = position['sl']
             
-            # Activate trailing
             if not exit_reason and not position.get('trail_active'):
                 activation = position['entry'] + position['atr'] * params.trailing_stop_activate_pips
                 if current_price >= activation:
                     position['trail_active'] = True
             
             if exit_reason:
-                pnl = (exit_price - position['entry']) * position['qty']
+                # Apply slippage on exit
+                slip = exit_price * slippage_pct
+                exit_price -= slip  # Slippage hurts on sells
+                total_slippage += abs(slip * position['qty'])
+                
+                # Calculate PnL
+                raw_pnl = (exit_price - position['entry']) * position['qty']
+                
+                # Apply trading fee
+                fee = abs(exit_price * position['qty']) * fee_pct
+                total_fees += fee
+                pnl = raw_pnl - fee
+                
                 pnl_pct = ((exit_price - position['entry']) / position['entry']) * 100
                 balance += pnl
                 
@@ -1363,7 +1393,11 @@ def run_backtest(candles, params):
                     "exit_reason": exit_reason,
                     "sl": round(position['sl'], 8),
                     "tp": round(position['tp'], 8),
-                    "hold_candles": i - position['entry_idx']
+                    "hold_candles": i - position['entry_idx'],
+                    "fee": round(fee, 4),
+                    "slippage": round(slip * position['qty'], 4),
+                    "regime_at_entry": position.get('regime', 'NORMAL'),
+                    "volume_ratio_at_entry": position.get('vol_ratio', 0)
                 })
                 position = None
             continue
@@ -1385,7 +1419,13 @@ def run_backtest(candles, params):
         if atr <= 0 or atr > current_price * 0.1:
             continue
         
-        # Structure (use candles a few back)
+        # Volume filter
+        vol_passes, vol_ratio = volume_filter(window, vol_filter_mult)
+        if not vol_passes:
+            signals_rejected_volume += 1
+            continue
+        
+        # Structure
         struct_candles = window[-10:-2]
         if len(struct_candles) >= 2:
             if struct_candles[-1]['high'] > struct_candles[-2]['high'] and struct_candles[-1]['low'] > struct_candles[-2]['low']:
@@ -1414,31 +1454,57 @@ def run_backtest(candles, params):
         if not has_signal or rsi > params.rsi_overbought:
             continue
         
-        # Probability
+        # Probability with volume and regime factors
         bb_pos = (current_price - bb['middle']) / (bb['upper'] - bb['middle']) if bb['upper'] != bb['middle'] else 0
         momentum = (fast_e - slow_e) / current_price * 100
-        z = 0.3 * momentum + 0.2 * (1 if trend == 'UPTREND' else 0.5) - 0.05 * (atr / current_price * 100) + 0.15 * (50 - abs(rsi - 50)) / 50 + 0.1 * max(-1, min(1, bb_pos)) + 0.1 * (1 if sweep == 'BUY_SWEEP' else 0.5)
+        vol_bonus = min(0.15, (vol_ratio - 1) * 0.1)
+        regime_penalty = -0.1 if regime == 'HIGH_VOL' else (0.05 if regime == 'NORMAL' else -0.05)
+        
+        z = (0.25 * momentum + 0.15 * (1 if trend == 'UPTREND' else 0.5) 
+             - 0.05 * (atr / current_price * 100) 
+             + 0.12 * (50 - abs(rsi - 50)) / 50 
+             + 0.08 * max(-1, min(1, bb_pos))
+             + 0.1 * (1 if sweep == 'BUY_SWEEP' else 0.5)
+             + 0.15 * vol_bonus + 0.1 * regime_penalty)
         z = max(-5, min(5, z))
         prob = 1 / (1 + math.exp(-z))
         
         if prob < params.min_entry_probability:
             continue
         
-        # Position sizing
+        # Regime-based size adjustment
+        if vol_regime_enabled and regime == 'HIGH_VOL':
+            signals_rejected_regime += 1
+            effective_mult = vol_reduce_factor
+        else:
+            effective_mult = 1.0
+        
+        # Position sizing with structure-based SL
+        struct_sl = structure_stop_loss(window, 'LONG', atr)
         sl_price = current_price - atr * params.atr_sl_multiplier
+        if struct_sl:
+            sl_price = max(struct_sl, sl_price)  # Use tighter of the two
         tp_price = current_price + atr * params.atr_tp_multiplier
         
-        risk_amount = balance * (params.risk_per_trade_percent / 100)
-        price_risk = abs(current_price - sl_price)
+        # Apply slippage on entry
+        entry_with_slip = current_price + (current_price * slippage_pct)
+        entry_fee = abs(entry_with_slip * params.base_usdt_per_trade / entry_with_slip) * fee_pct
+        total_fees += entry_fee
+        total_slippage += abs(current_price * slippage_pct * params.base_usdt_per_trade / current_price)
+        
+        risk_amount = balance * (params.risk_per_trade_percent / 100) * effective_mult
+        price_risk = abs(entry_with_slip - sl_price)
         if price_risk <= 0:
             continue
         
-        qty = min(risk_amount / price_risk, params.base_usdt_per_trade / current_price)
-        if qty <= 0 or qty * current_price < 5:
+        qty = min(risk_amount / price_risk, params.base_usdt_per_trade * effective_mult / entry_with_slip)
+        if qty <= 0 or qty * entry_with_slip < 5:
             continue
         
+        balance -= entry_fee  # Deduct entry fee
+        
         position = {
-            'entry': current_price,
+            'entry': entry_with_slip,
             'sl': sl_price,
             'tp': tp_price,
             'qty': round(qty, 8),
@@ -1446,13 +1512,19 @@ def run_backtest(candles, params):
             'entry_time': current_time,
             'entry_idx': i,
             'trail_active': False,
-            'probability': prob
+            'probability': prob,
+            'regime': regime,
+            'vol_ratio': vol_ratio
         }
     
     # Close any remaining position at last price
     if position:
         last_price = candles[-1]['close']
-        pnl = (last_price - position['entry']) * position['qty']
+        slip = last_price * slippage_pct
+        last_price -= slip
+        fee = abs(last_price * position['qty']) * fee_pct
+        total_fees += fee
+        pnl = (last_price - position['entry']) * position['qty'] - fee
         pnl_pct = ((last_price - position['entry']) / position['entry']) * 100
         balance += pnl
         trades.append({
@@ -1466,7 +1538,11 @@ def run_backtest(candles, params):
             "exit_reason": "END_OF_DATA",
             "sl": round(position['sl'], 8),
             "tp": round(position['tp'], 8),
-            "hold_candles": len(candles) - position['entry_idx']
+            "hold_candles": len(candles) - position['entry_idx'],
+            "fee": round(fee, 4),
+            "slippage": round(slip * position['qty'], 4),
+            "regime_at_entry": position.get('regime', 'NORMAL'),
+            "volume_ratio_at_entry": position.get('vol_ratio', 0)
         })
     
     # Compute stats
