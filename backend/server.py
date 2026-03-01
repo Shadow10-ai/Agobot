@@ -628,14 +628,28 @@ async def bot_scan_loop():
             
             # Look for new entries
             open_count = await db.positions.count_documents({"status": "OPEN"})
-            if open_count < 4:
+            if open_count < 3:  # Reduced from 4 for correlation safety
                 for symbol in symbols:
                     if await db.positions.find_one({"symbol": symbol, "status": "OPEN"}):
                         continue
                     
+                    # NEW: Check correlation exposure before entering
+                    can_open, corr_info = await check_correlation_exposure(symbol, db)
+                    if not can_open:
+                        logger.info(f"Skipping {symbol}: correlation exposure ({corr_info['group']}, {corr_info['correlated_positions']} correlated)")
+                        continue
+                    
                     signal = calculate_signal(symbol)
                     if signal and signal["probability"] >= min_prob:
-                        quantity = round(base_usdt / signal["price"], 8)
+                        # NEW: Skip low volume signals
+                        if not signal.get("volume_passes", True):
+                            logger.info(f"Skipping {symbol}: low volume (ratio: {signal.get('volume_ratio', 0)})")
+                            continue
+                        
+                        # NEW: Adjust quantity by volatility regime
+                        regime_mult = signal.get("regime_size_multiplier", 1.0)
+                        adjusted_usdt = base_usdt * regime_mult
+                        quantity = round(adjusted_usdt / signal["price"], 8)
                         
                         now = datetime.now(timezone.utc).isoformat()
                         position_doc = {
@@ -655,10 +669,13 @@ async def bot_scan_loop():
                             "unrealized_pnl_percent": 0.0,
                             "opened_at": now,
                             "mode": "DRY",
-                            "indicators": signal["indicators"]
+                            "indicators": signal["indicators"],
+                            "volume_ratio": signal.get("volume_ratio", 0),
+                            "volatility_regime": signal.get("volatility_regime", "NORMAL"),
+                            "correlation_group": corr_info["group"]
                         }
                         await db.positions.insert_one(position_doc)
-                        logger.info(f"Opened LONG {symbol} @ {signal['price']:.8f}, Prob: {signal['probability']:.2%}")
+                        logger.info(f"Opened LONG {symbol} @ {signal['price']:.8f}, Prob: {signal['probability']:.2%}, Vol: {signal.get('volume_ratio', 0)}x, Regime: {signal.get('volatility_regime', 'N/A')}")
                         break
             
             bot_state["scan_count"] += 1
