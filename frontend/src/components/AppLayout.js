@@ -56,7 +56,7 @@ export const Sidebar = ({ user, onLogout }) => {
           <div className="w-8 h-8 rounded-sm bg-blue-500 flex items-center justify-center flex-shrink-0">
             <TrendingUp className="w-4 h-4 text-white" />
           </div>
-          <span className="text-base font-bold tracking-tight">CryptoBot</span>
+          <span className="text-base font-bold tracking-tight">AgoBot</span>
         </div>
 
         {/* Nav */}
