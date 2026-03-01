@@ -80,7 +80,7 @@ class AgoBacktesterTester:
         return False
 
     def test_backtest_api(self):
-        """Test the new backtest functionality with robustness improvements"""
+        """Test the backtest functionality with NEW robustness improvements"""
         print("\n🧪 Testing Backtest API with Robustness Features...")
         
         # Test backtest with NEW robustness parameters
@@ -107,7 +107,7 @@ class AgoBacktesterTester:
         }
         
         success, response = self.run_test(
-            "Run 30-day BTC backtest",
+            "Run 30-day BTC backtest with robustness features",
             "POST",
             "backtest",
             200,
@@ -135,6 +135,22 @@ class AgoBacktesterTester:
                 
             print(f"   ✅ Backtest completed:")
             print(f"      Total Trades: {summary.get('total_trades')}")
+            print(f"      Win Rate: {summary.get('win_rate')}%")
+            print(f"      Total PnL: ${summary.get('total_pnl')}")
+            print(f"      Max Drawdown: {summary.get('max_drawdown_pct')}%")
+            print(f"      Profit Factor: {summary.get('profit_factor')}")
+            print(f"      Sharpe Ratio: {summary.get('sharpe_ratio')}")
+            # NEW: Robustness metrics
+            print(f"      Total Fees: ${summary.get('total_fees', 0):.4f}")
+            print(f"      Total Slippage: ${summary.get('total_slippage', 0):.4f}")
+            print(f"      Volume Filter Rejects: {summary.get('signals_rejected_volume', 0)}")
+            print(f"      Regime Adjustments: {summary.get('signals_rejected_regime', 0)}")
+            print(f"      Equity Curve Points: {len(response.get('equity_curve', []))}")
+            print(f"      Trade Details: {len(response.get('trades', []))}")
+            
+            return True
+        return False
+
     def test_strategy_comparison_api(self):
         """Test the NEW strategy comparison functionality"""
         print("\n🆚 Testing Strategy Comparison API...")
@@ -303,21 +319,6 @@ class AgoBacktesterTester:
             
             return True
         return False
-            print(f"      Win Rate: {summary.get('win_rate')}%")
-            print(f"      Total PnL: ${summary.get('total_pnl')}")
-            print(f"      Max Drawdown: {summary.get('max_drawdown_pct')}%")
-            print(f"      Profit Factor: {summary.get('profit_factor')}")
-            print(f"      Sharpe Ratio: {summary.get('sharpe_ratio')}")
-            # NEW: Robustness metrics
-            print(f"      Total Fees: ${summary.get('total_fees', 0):.4f}")
-            print(f"      Total Slippage: ${summary.get('total_slippage', 0):.4f}")
-            print(f"      Volume Filter Rejects: {summary.get('signals_rejected_volume', 0)}")
-            print(f"      Regime Adjustments: {summary.get('signals_rejected_regime', 0)}")
-            print(f"      Equity Curve Points: {len(response.get('equity_curve', []))}")
-            print(f"      Trade Details: {len(response.get('trades', []))}")
-            
-            return True
-        return False
 
     def test_backtest_history(self):
         """Test backtest history retrieval"""
@@ -398,11 +399,15 @@ class AgoBacktesterTester:
                 "symbol": symbol,
                 "period_days": 15,  # Shorter for faster testing
                 "initial_balance": 5000.0,
-                "min_entry_probability": 0.4
+                "min_entry_probability": 0.4,
+                "slippage_pct": 0.05,
+                "fee_pct": 0.1,
+                "volume_filter_multiplier": 1.5,
+                "volatility_regime_enabled": True
             }
             
             success, response = self.run_test(
-                f"Backtest {symbol}",
+                f"Backtest {symbol} with robustness features",
                 "POST",
                 "backtest",
                 200,
@@ -412,6 +417,7 @@ class AgoBacktesterTester:
             if success:
                 summary = response.get('summary', {})
                 print(f"   ✅ {symbol}: {summary.get('total_trades', 0)} trades, ${summary.get('total_pnl', 0):.2f} PnL")
+                print(f"      Fees: ${summary.get('total_fees', 0):.2f}, Slippage: ${summary.get('total_slippage', 0):.2f}")
             else:
                 return False
                 
@@ -459,7 +465,7 @@ def main():
         return 1
     
     print("\n" + "="*60)
-    print("AGOBOT STRATEGY BACKTESTER - COMPREHENSIVE TESTING")
+    print("AGOBOT ITERATION 4 - ROBUSTNESS IMPROVEMENTS TESTING")
     print("="*60)
     
     # Run all tests
