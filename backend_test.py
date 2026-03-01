@@ -123,7 +123,11 @@ class AgoBacktesterTester:
                 return False
                 
             summary = response.get('summary', {})
-            required_summary_fields = ['total_trades', 'win_rate', 'total_pnl', 'max_drawdown', 'profit_factor', 'sharpe_ratio']
+            required_summary_fields = [
+                'total_trades', 'win_rate', 'total_pnl', 'max_drawdown', 'profit_factor', 'sharpe_ratio',
+                # NEW: Robustness metrics
+                'total_fees', 'total_slippage', 'signals_rejected_volume', 'signals_rejected_regime'
+            ]
             missing_summary = [f for f in required_summary_fields if f not in summary]
             if missing_summary:
                 print(f"   ❌ Missing summary fields: {missing_summary}")
