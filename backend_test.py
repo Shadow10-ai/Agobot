@@ -250,6 +250,50 @@ class CryptoTradingBotTester:
         
         return True
 
+    def test_leaderboard(self):
+        """Test new leaderboard endpoint"""
+        self.log("=== LEADERBOARD TESTS ===")
+        
+        success, response = self.run_test(
+            "Get leaderboard data",
+            "GET",
+            "/leaderboard",
+            200
+        )
+        
+        if success:
+            required_keys = [
+                'symbol_rankings', 'best_trades', 'worst_trades', 'streaks', 
+                'time_analysis', 'exit_analysis', 'weekly_pnl', 'risk_reward_avg', 
+                'consistency_score'
+            ]
+            missing_keys = [key for key in required_keys if key not in response]
+            if missing_keys:
+                self.log(f"Leaderboard missing keys: {missing_keys}", "FAIL")
+                self.failures.append(f"Leaderboard missing required keys: {missing_keys}")
+            else:
+                self.log("Leaderboard contains all required fields", "PASS")
+                
+                # Additional validation for data structure
+                if isinstance(response.get('symbol_rankings'), list):
+                    self.log("Symbol rankings is properly formatted as list", "PASS")
+                else:
+                    self.log("Symbol rankings should be a list", "FAIL")
+                
+                streaks = response.get('streaks', {})
+                if isinstance(streaks, dict) and all(k in streaks for k in ['current', 'current_type', 'best_win', 'worst_loss']):
+                    self.log("Streaks data properly structured", "PASS")
+                else:
+                    self.log("Streaks data missing required fields", "FAIL")
+                    
+                time_analysis = response.get('time_analysis', {})
+                if isinstance(time_analysis, dict) and all(k in time_analysis for k in ['best_hour', 'worst_hour', 'hourly_pnl']):
+                    self.log("Time analysis data properly structured", "PASS")
+                else:
+                    self.log("Time analysis data missing required fields", "FAIL")
+        
+        return success
+
     def test_registration(self):
         """Test user registration with new user"""
         self.log("=== REGISTRATION TEST ===")
