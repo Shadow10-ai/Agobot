@@ -337,6 +337,7 @@ class CryptoTradingBotTester:
         self.test_bot_control()
         self.test_bot_config() 
         self.test_trading_data()
+        self.test_leaderboard()
         
         return self.get_results()
 
