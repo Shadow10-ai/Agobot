@@ -81,6 +81,21 @@ class TelegramConfig(BaseModel):
     telegram_token: str = ""
     telegram_chat_id: str = ""
 
+class BacktestRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    period_days: int = 30
+    base_usdt_per_trade: float = 50.0
+    risk_per_trade_percent: float = 0.5
+    rsi_period: int = 14
+    rsi_overbought: float = 70.0
+    rsi_oversold: float = 30.0
+    min_entry_probability: float = 0.45
+    trailing_stop_activate_pips: float = 2.4
+    trailing_stop_distance_pips: float = 1.2
+    atr_sl_multiplier: float = 1.2
+    atr_tp_multiplier: float = 2.4
+    initial_balance: float = 10000.0
+
 # ====================================================================
 # AUTH HELPERS
 # ====================================================================
