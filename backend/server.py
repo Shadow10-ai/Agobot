@@ -286,21 +286,34 @@ def calculate_signal(symbol):
     if not all([fast_ema, slow_ema, rsi, macd, bb, atr]):
         return None
     
-    # Structure check
-    if candles[-1]['high'] > candles[-2]['high'] and candles[-1]['low'] > candles[-2]['low']:
-        trend = 'UPTREND'
-    elif candles[-1]['high'] < candles[-2]['high'] and candles[-1]['low'] < candles[-2]['low']:
-        trend = 'DOWNTREND'
+    # Multi-timeframe structure check (use earlier candles for structure)
+    structure_candles = candles[-10:-2]
+    if len(structure_candles) >= 2:
+        if structure_candles[-1]['high'] > structure_candles[-2]['high'] and structure_candles[-1]['low'] > structure_candles[-2]['low']:
+            trend = 'UPTREND'
+        elif structure_candles[-1]['high'] < structure_candles[-2]['high'] and structure_candles[-1]['low'] < structure_candles[-2]['low']:
+            trend = 'DOWNTREND'
+        else:
+            trend = 'RANGE'
     else:
         trend = 'RANGE'
     
-    # Sweep check
+    # Sweep check on most recent candles
     sweep_signal = None
     if candles[-1]['low'] < candles[-2]['low'] and candles[-1]['close'] > candles[-2]['low']:
         sweep_signal = 'BUY_SWEEP'
+    # Also check if EMA crossover is bullish
+    elif fast_ema > slow_ema:
+        sweep_signal = 'EMA_BULLISH'
     
-    # Only buy signals for spot
-    if trend != 'UPTREND' or sweep_signal != 'BUY_SWEEP':
+    # Buy signals: uptrend + sweep, or strong EMA signal
+    has_buy_signal = (
+        (trend == 'UPTREND' and sweep_signal in ['BUY_SWEEP', 'EMA_BULLISH']) or
+        (trend != 'DOWNTREND' and sweep_signal == 'BUY_SWEEP') or
+        (fast_ema > slow_ema and rsi < 60 and rsi > 35)
+    )
+    
+    if not has_buy_signal:
         return None
     
     if rsi > 70:
@@ -308,8 +321,9 @@ def calculate_signal(symbol):
     
     # Probability calculation
     bb_pos = (current_price - bb['middle']) / (bb['upper'] - bb['middle']) if bb['upper'] != bb['middle'] else 0
-    z = 0.3 * ((fast_ema - slow_ema) / 10) + 0.2 * 1 - 0.1 * (atr / 10) + 0.1 * (rsi - 50) / 50 + 0.1 * bb_pos + 0.1 * macd['histogram']
-    z = max(-20, min(20, z))
+    momentum = (fast_ema - slow_ema) / current_price * 100
+    z = 0.3 * momentum + 0.2 * (1 if trend == 'UPTREND' else 0.5) - 0.05 * (atr / current_price * 100) + 0.15 * (50 - abs(rsi - 50)) / 50 + 0.1 * max(-1, min(1, bb_pos)) + 0.1 * (1 if sweep_signal == 'BUY_SWEEP' else 0.5)
+    z = max(-5, min(5, z))
     prob = 1 / (1 + math.exp(-z))
     
     sl_distance = atr * 1.2
