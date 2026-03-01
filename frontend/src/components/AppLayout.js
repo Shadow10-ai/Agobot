@@ -8,11 +8,13 @@ import {
   TrendingUp,
   Menu,
   X,
+  Trophy,
 } from "lucide-react";
 
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard" },
   { path: "/trades", icon: History, label: "Trade History" },
+  { path: "/leaderboard", icon: Trophy, label: "Leaderboard" },
   { path: "/config", icon: Settings, label: "Configuration" },
 ];
 
