@@ -54,6 +54,11 @@ const DEFAULT_PARAMS = {
   atr_sl_multiplier: 1.2,
   atr_tp_multiplier: 2.4,
   initial_balance: 10000,
+  slippage_pct: 0.05,
+  fee_pct: 0.1,
+  volume_filter_multiplier: 1.5,
+  volatility_regime_enabled: true,
+  volatility_reduce_factor: 0.5,
 };
 
 const ParamInput = ({ label, name, value, onChange, step, min, max, description }) => (
