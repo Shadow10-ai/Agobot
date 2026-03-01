@@ -95,6 +95,19 @@ class BacktestRequest(BaseModel):
     atr_sl_multiplier: float = 1.2
     atr_tp_multiplier: float = 2.4
     initial_balance: float = 10000.0
+    # NEW: Robustness features
+    slippage_pct: float = 0.05
+    fee_pct: float = 0.1
+    volume_filter_multiplier: float = 1.5
+    volatility_regime_enabled: bool = True
+    volatility_reduce_factor: float = 0.5
+    label: str = ""
+
+class StrategyCompareRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    period_days: int = 30
+    strategy_a: BacktestRequest
+    strategy_b: BacktestRequest
 
 # ====================================================================
 # AUTH HELPERS
