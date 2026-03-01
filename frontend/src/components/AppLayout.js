@@ -9,12 +9,14 @@ import {
   Menu,
   X,
   Trophy,
+  FlaskConical,
 } from "lucide-react";
 
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard" },
   { path: "/trades", icon: History, label: "Trade History" },
   { path: "/leaderboard", icon: Trophy, label: "Leaderboard" },
+  { path: "/backtester", icon: FlaskConical, label: "Backtester" },
   { path: "/config", icon: Settings, label: "Configuration" },
 ];
 
