@@ -465,7 +465,9 @@ def main():
     # Run all tests
     tests = [
         ("Backtest API", tester.test_backtest_api),
-        ("Backtest History", tester.test_backtest_history), 
+        ("Strategy Comparison API", tester.test_strategy_comparison_api),
+        ("Robustness Parameters", tester.test_robustness_parameters), 
+        ("Backtest History", tester.test_backtest_history),
         ("Backtest Validation", tester.test_backtest_validation),
         ("Multiple Symbols", tester.test_different_symbols),
         ("Existing Endpoints", tester.test_existing_endpoints)
