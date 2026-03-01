@@ -80,10 +80,10 @@ class AgoBacktesterTester:
         return False
 
     def test_backtest_api(self):
-        """Test the new backtest functionality"""
-        print("\n🧪 Testing Backtest API...")
+        """Test the new backtest functionality with robustness improvements"""
+        print("\n🧪 Testing Backtest API with Robustness Features...")
         
-        # Test backtest with default parameters
+        # Test backtest with NEW robustness parameters
         backtest_params = {
             "symbol": "BTCUSDT",
             "period_days": 30,
@@ -97,7 +97,13 @@ class AgoBacktesterTester:
             "trailing_stop_distance_pips": 1.2,
             "atr_sl_multiplier": 1.2,
             "atr_tp_multiplier": 2.4,
-            "initial_balance": 10000.0
+            "initial_balance": 10000.0,
+            # NEW: Robustness parameters
+            "slippage_pct": 0.05,
+            "fee_pct": 0.1,
+            "volume_filter_multiplier": 1.5,
+            "volatility_regime_enabled": True,
+            "volatility_reduce_factor": 0.5
         }
         
         success, response = self.run_test(
