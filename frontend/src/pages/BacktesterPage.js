@@ -254,6 +254,27 @@ export default function BacktesterPage({ user, onLogout }) {
                     <ParamInput label="Trail Activate" name="trailing_stop_activate_pips" value={params.trailing_stop_activate_pips} onChange={handleChange} step={0.1} min={0.5} />
                     <ParamInput label="Trail Distance" name="trailing_stop_distance_pips" value={params.trailing_stop_distance_pips} onChange={handleChange} step={0.1} min={0.1} />
                   </div>
+                  <div className="pt-2 border-t border-white/5">
+                    <span className="text-[9px] text-zinc-600 font-semibold uppercase tracking-wider">Robustness Settings</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <ParamInput label="Slippage %" name="slippage_pct" value={params.slippage_pct} onChange={handleChange} step={0.01} min={0} max={1} description="Market order slippage" />
+                    <ParamInput label="Trading Fee %" name="fee_pct" value={params.fee_pct} onChange={handleChange} step={0.01} min={0} max={0.5} description="Exchange fee per trade" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <ParamInput label="Vol Filter (x)" name="volume_filter_multiplier" value={params.volume_filter_multiplier} onChange={handleChange} step={0.1} min={0.5} max={5} description="Min volume vs average" />
+                    <ParamInput label="Vol Reduce Factor" name="volatility_reduce_factor" value={params.volatility_reduce_factor} onChange={handleChange} step={0.1} min={0.1} max={1} description="Size reduction in high vol" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={params.volatility_regime_enabled}
+                      onChange={(e) => handleChange("volatility_regime_enabled", e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-zinc-600"
+                      data-testid="bt-vol-regime-toggle"
+                    />
+                    <span className="text-xs text-zinc-400">Enable Volatility Regime Detection</span>
+                  </div>
                 </div>
               )}
 
