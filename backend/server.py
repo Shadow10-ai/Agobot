@@ -1685,6 +1685,69 @@ async def get_backtest_history(user=Depends(get_current_user)):
     ).sort("created_at", -1).limit(20).to_list(20)
     return backtests
 
+@api_router.post("/backtest/compare")
+async def compare_strategies(data: StrategyCompareRequest, user=Depends(get_current_user)):
+    """Run two strategies on the SAME price data for fair comparison."""
+    if data.symbol not in VALID_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"Invalid symbol")
+    if data.period_days < 7 or data.period_days > 365:
+        raise HTTPException(status_code=400, detail="Period must be 7-365 days")
+    
+    # Generate candles ONCE — both strategies see identical data
+    candles = generate_historical_candles(data.symbol, data.period_days)
+    
+    # Override symbol and period to match
+    data.strategy_a.symbol = data.symbol
+    data.strategy_a.period_days = data.period_days
+    data.strategy_b.symbol = data.symbol
+    data.strategy_b.period_days = data.period_days
+    
+    result_a = run_backtest(candles, data.strategy_a)
+    result_b = run_backtest(candles, data.strategy_b)
+    
+    sa = result_a["summary"]
+    sb = result_b["summary"]
+    
+    # Determine winner per metric
+    comparison = {
+        "total_pnl": "A" if sa["total_pnl"] > sb["total_pnl"] else "B",
+        "win_rate": "A" if sa["win_rate"] > sb["win_rate"] else "B",
+        "profit_factor": "A" if sa["profit_factor"] > sb["profit_factor"] else "B",
+        "max_drawdown": "A" if sa["max_drawdown_pct"] < sb["max_drawdown_pct"] else "B",
+        "sharpe_ratio": "A" if sa["sharpe_ratio"] > sb["sharpe_ratio"] else "B",
+        "expectancy": "A" if sa["expectancy"] > sb["expectancy"] else "B",
+    }
+    a_wins = list(comparison.values()).count("A")
+    b_wins = list(comparison.values()).count("B")
+    overall_winner = "A" if a_wins > b_wins else ("B" if b_wins > a_wins else "TIE")
+    
+    return {
+        "symbol": data.symbol,
+        "period_days": data.period_days,
+        "candle_count": len(candles),
+        "price_range": result_a["price_range"],
+        "strategy_a": {
+            "label": data.strategy_a.label or "Strategy A",
+            "params": data.strategy_a.model_dump(),
+            "summary": sa,
+            "equity_curve": result_a["equity_curve"],
+            "monthly_pnl": result_a["monthly_pnl"],
+            "exit_breakdown": result_a["exit_breakdown"],
+        },
+        "strategy_b": {
+            "label": data.strategy_b.label or "Strategy B",
+            "params": data.strategy_b.model_dump(),
+            "summary": sb,
+            "equity_curve": result_b["equity_curve"],
+            "monthly_pnl": result_b["monthly_pnl"],
+            "exit_breakdown": result_b["exit_breakdown"],
+        },
+        "comparison": comparison,
+        "overall_winner": overall_winner,
+        "a_wins": a_wins,
+        "b_wins": b_wins,
+    }
+
 # ====================================================================
 # PRICES API
 # ====================================================================
