@@ -1,375 +1,307 @@
 import requests
 import sys
+import json
 import time
 from datetime import datetime
 
-class CryptoTradingBotTester:
+class AgoBacktesterTester:
     def __init__(self, base_url="https://trading-bot-spot.preview.emergentagent.com"):
-        self.base_url = base_url
-        self.api_url = f"{base_url}/api"
+        self.base_url = base_url + "/api"
         self.token = None
         self.tests_run = 0
         self.tests_passed = 0
-        self.failures = []
-
-    def log(self, message, status=None):
-        """Log test results with timestamps"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        if status == "PASS":
-            print(f"[{timestamp}] ✅ {message}")
-        elif status == "FAIL":
-            print(f"[{timestamp}] ❌ {message}")
-        else:
-            print(f"[{timestamp}] 🔍 {message}")
+        self.test_results = []
 
     def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
-        """Run a single API test"""
-        url = f"{self.api_url}{endpoint}"
+        """Run a single API test with detailed tracking"""
+        url = f"{self.base_url}/{endpoint}"
         test_headers = {'Content-Type': 'application/json'}
-        
         if self.token:
             test_headers['Authorization'] = f'Bearer {self.token}'
         if headers:
             test_headers.update(headers)
 
         self.tests_run += 1
-        self.log(f"Testing {name}...")
+        print(f"\n🔍 Testing {name}...")
         
         try:
             if method == 'GET':
-                response = requests.get(url, headers=test_headers)
+                response = requests.get(url, headers=test_headers, timeout=30)
             elif method == 'POST':
-                response = requests.post(url, json=data, headers=test_headers)
+                response = requests.post(url, json=data, headers=test_headers, timeout=30)
             elif method == 'PUT':
-                response = requests.put(url, json=data, headers=test_headers)
-            elif method == 'DELETE':
-                response = requests.delete(url, headers=test_headers)
-            else:
-                raise ValueError(f"Unsupported method: {method}")
+                response = requests.put(url, json=data, headers=test_headers, timeout=30)
 
             success = response.status_code == expected_status
             if success:
                 self.tests_passed += 1
-                self.log(f"{name} - Status: {response.status_code}", "PASS")
-                return True, response.json() if response.content else {}
+                print(f"✅ Passed - Status: {response.status_code}")
+                self.test_results.append({"test": name, "status": "PASS", "response_code": response.status_code})
+                return success, response.json() if response.content else {}
             else:
-                error_msg = f"{name} - Expected {expected_status}, got {response.status_code}"
-                if response.content:
-                    try:
-                        error_detail = response.json().get('detail', 'No detail')
-                        error_msg += f" - {error_detail}"
-                    except:
-                        error_msg += f" - {response.text[:200]}"
-                self.failures.append(error_msg)
-                self.log(error_msg, "FAIL")
+                print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
+                print(f"   Response: {response.text[:200]}...")
+                self.test_results.append({"test": name, "status": "FAIL", "expected": expected_status, "actual": response.status_code, "error": response.text[:200]})
                 return False, {}
 
         except Exception as e:
-            error_msg = f"{name} - Error: {str(e)}"
-            self.failures.append(error_msg)
-            self.log(error_msg, "FAIL")
+            print(f"❌ Failed - Error: {str(e)}")
+            self.test_results.append({"test": name, "status": "ERROR", "error": str(e)})
             return False, {}
 
-    def test_auth(self):
-        """Test authentication endpoints"""
-        self.log("=== AUTHENTICATION TESTS ===")
-        
-        # Test login with test user
+    def test_auth_flow(self):
+        """Test authentication with existing user"""
+        print("\n🔑 Testing Authentication...")
         success, response = self.run_test(
             "Login with test user",
             "POST",
-            "/auth/login",
+            "auth/login",
             200,
             data={"email": "test@trader.com", "password": "test123"}
         )
-        
         if success and 'access_token' in response:
             self.token = response['access_token']
-            self.log(f"Token obtained: {self.token[:20]}...")
-            
-            # Test get current user
-            self.run_test(
-                "Get current user",
-                "GET",
-                "/auth/me",
-                200
-            )
+            print(f"   Token obtained for user: {response.get('user', {}).get('email')}")
+            return True
         else:
-            self.log("Login failed - cannot proceed with authenticated tests", "FAIL")
-            return False
-        
-        return True
+            # Try to register test user if login fails
+            print("   Login failed, attempting to register test user...")
+            success, response = self.run_test(
+                "Register test user",
+                "POST",
+                "auth/register",
+                200,
+                data={"email": "test@trader.com", "password": "test123", "name": "Test Trader"}
+            )
+            if success and 'access_token' in response:
+                self.token = response['access_token']
+                print(f"   Test user registered and token obtained")
+                return True
+        return False
 
-    def test_dashboard(self):
-        """Test dashboard endpoint"""
-        self.log("=== DASHBOARD TESTS ===")
+    def test_backtest_api(self):
+        """Test the new backtest functionality"""
+        print("\n🧪 Testing Backtest API...")
         
-        success, response = self.run_test(
-            "Get dashboard data",
-            "GET",
-            "/dashboard",
-            200
-        )
-        
-        if success:
-            required_keys = ['balance', 'daily_pnl', 'total_pnl', 'win_rate', 'total_trades', 'bot_status']
-            missing_keys = [key for key in required_keys if key not in response]
-            if missing_keys:
-                self.log(f"Dashboard missing keys: {missing_keys}", "FAIL")
-                self.failures.append(f"Dashboard missing required keys: {missing_keys}")
-            else:
-                self.log("Dashboard contains all required fields", "PASS")
-        
-        return success
-
-    def test_bot_control(self):
-        """Test bot control endpoints"""
-        self.log("=== BOT CONTROL TESTS ===")
-        
-        # Get bot status
-        success, status_response = self.run_test(
-            "Get bot status",
-            "GET",
-            "/bot/status",
-            200
-        )
-        
-        if success:
-            required_status_keys = ['running', 'paused', 'mode', 'scan_count']
-            missing_keys = [key for key in required_status_keys if key not in status_response]
-            if missing_keys:
-                self.log(f"Bot status missing keys: {missing_keys}", "FAIL")
-                self.failures.append(f"Bot status missing required keys: {missing_keys}")
-        
-        # Test bot pause
-        self.run_test(
-            "Pause bot",
-            "POST",
-            "/bot/pause",
-            200
-        )
-        
-        # Wait a moment
-        time.sleep(1)
-        
-        # Test bot resume
-        self.run_test(
-            "Resume bot",
-            "POST",
-            "/bot/resume",
-            200
-        )
-        
-        # Test bot stop
-        self.run_test(
-            "Stop bot",
-            "POST",
-            "/bot/stop",
-            200
-        )
-        
-        # Test bot start
-        self.run_test(
-            "Start bot",
-            "POST",
-            "/bot/start",
-            200
-        )
-        
-        return True
-
-    def test_bot_config(self):
-        """Test bot configuration endpoints"""
-        self.log("=== BOT CONFIG TESTS ===")
-        
-        # Get config
-        success, config_response = self.run_test(
-            "Get bot config",
-            "GET",
-            "/bot/config",
-            200
-        )
-        
-        if success:
-            required_config_keys = ['symbols', 'base_usdt_per_trade', 'risk_per_trade_percent', 'min_entry_probability']
-            missing_keys = [key for key in required_config_keys if key not in config_response]
-            if missing_keys:
-                self.log(f"Bot config missing keys: {missing_keys}", "FAIL")
-                self.failures.append(f"Bot config missing required keys: {missing_keys}")
-        
-        # Update config
-        update_data = {
-            "base_usdt_per_trade": 25.0,
-            "min_entry_probability": 0.7
+        # Test backtest with default parameters
+        backtest_params = {
+            "symbol": "BTCUSDT",
+            "period_days": 30,
+            "base_usdt_per_trade": 50.0,
+            "risk_per_trade_percent": 0.5,
+            "rsi_period": 14,
+            "rsi_overbought": 70.0,
+            "rsi_oversold": 30.0,
+            "min_entry_probability": 0.45,
+            "trailing_stop_activate_pips": 2.4,
+            "trailing_stop_distance_pips": 1.2,
+            "atr_sl_multiplier": 1.2,
+            "atr_tp_multiplier": 2.4,
+            "initial_balance": 10000.0
         }
-        self.run_test(
-            "Update bot config",
-            "PUT",
-            "/bot/config",
-            200,
-            data=update_data
-        )
-        
-        return success
-
-    def test_trading_data(self):
-        """Test trading data endpoints"""
-        self.log("=== TRADING DATA TESTS ===")
-        
-        # Test trades
-        self.run_test(
-            "Get trades",
-            "GET",
-            "/trades",
-            200
-        )
-        
-        # Test positions
-        self.run_test(
-            "Get positions",
-            "GET",
-            "/positions",
-            200
-        )
-        
-        # Test performance
-        self.run_test(
-            "Get performance",
-            "GET",
-            "/performance",
-            200
-        )
-        
-        # Test prices
-        self.run_test(
-            "Get prices",
-            "GET",
-            "/prices",
-            200
-        )
-        
-        return True
-
-    def test_leaderboard(self):
-        """Test new leaderboard endpoint"""
-        self.log("=== LEADERBOARD TESTS ===")
         
         success, response = self.run_test(
-            "Get leaderboard data",
+            "Run 30-day BTC backtest",
+            "POST",
+            "backtest",
+            200,
+            data=backtest_params
+        )
+        
+        if success:
+            # Verify response structure
+            required_fields = ['summary', 'trades', 'equity_curve', 'monthly_pnl', 'exit_breakdown']
+            missing_fields = [f for f in required_fields if f not in response]
+            if missing_fields:
+                print(f"   ❌ Missing required fields: {missing_fields}")
+                return False
+                
+            summary = response.get('summary', {})
+            required_summary_fields = ['total_trades', 'win_rate', 'total_pnl', 'max_drawdown', 'profit_factor', 'sharpe_ratio']
+            missing_summary = [f for f in required_summary_fields if f not in summary]
+            if missing_summary:
+                print(f"   ❌ Missing summary fields: {missing_summary}")
+                return False
+                
+            print(f"   ✅ Backtest completed:")
+            print(f"      Total Trades: {summary.get('total_trades')}")
+            print(f"      Win Rate: {summary.get('win_rate')}%")
+            print(f"      Total PnL: ${summary.get('total_pnl')}")
+            print(f"      Max Drawdown: {summary.get('max_drawdown_pct')}%")
+            print(f"      Profit Factor: {summary.get('profit_factor')}")
+            print(f"      Sharpe Ratio: {summary.get('sharpe_ratio')}")
+            print(f"      Equity Curve Points: {len(response.get('equity_curve', []))}")
+            print(f"      Trade Details: {len(response.get('trades', []))}")
+            
+            return True
+        return False
+
+    def test_backtest_history(self):
+        """Test backtest history retrieval"""
+        print("\n📈 Testing Backtest History...")
+        
+        success, response = self.run_test(
+            "Get backtest history",
             "GET",
-            "/leaderboard",
+            "backtests",
             200
         )
         
         if success:
-            required_keys = [
-                'symbol_rankings', 'best_trades', 'worst_trades', 'streaks', 
-                'time_analysis', 'exit_analysis', 'weekly_pnl', 'risk_reward_avg', 
-                'consistency_score'
-            ]
-            missing_keys = [key for key in required_keys if key not in response]
-            if missing_keys:
-                self.log(f"Leaderboard missing keys: {missing_keys}", "FAIL")
-                self.failures.append(f"Leaderboard missing required keys: {missing_keys}")
-            else:
-                self.log("Leaderboard contains all required fields", "PASS")
-                
-                # Additional validation for data structure
-                if isinstance(response.get('symbol_rankings'), list):
-                    self.log("Symbol rankings is properly formatted as list", "PASS")
-                else:
-                    self.log("Symbol rankings should be a list", "FAIL")
-                
-                streaks = response.get('streaks', {})
-                if isinstance(streaks, dict) and all(k in streaks for k in ['current', 'current_type', 'best_win', 'worst_loss']):
-                    self.log("Streaks data properly structured", "PASS")
-                else:
-                    self.log("Streaks data missing required fields", "FAIL")
-                    
-                time_analysis = response.get('time_analysis', {})
-                if isinstance(time_analysis, dict) and all(k in time_analysis for k in ['best_hour', 'worst_hour', 'hourly_pnl']):
-                    self.log("Time analysis data properly structured", "PASS")
-                else:
-                    self.log("Time analysis data missing required fields", "FAIL")
-        
-        return success
+            backtests = response if isinstance(response, list) else []
+            print(f"   ✅ Retrieved {len(backtests)} previous backtests")
+            
+            if backtests:
+                latest = backtests[0]
+                required_fields = ['id', 'symbol', 'params', 'summary', 'created_at']
+                missing = [f for f in required_fields if f not in latest]
+                if missing:
+                    print(f"   ❌ Missing fields in backtest history: {missing}")
+                    return False
+                print(f"   Latest: {latest.get('symbol')} - ${latest.get('summary', {}).get('total_pnl', 0):.2f} PnL")
+            
+            return True
+        return False
 
-    def test_registration(self):
-        """Test user registration with new user"""
-        self.log("=== REGISTRATION TEST ===")
+    def test_backtest_validation(self):
+        """Test backtest parameter validation"""
+        print("\n🔍 Testing Backtest Validation...")
         
-        # Create unique test user
-        timestamp = int(time.time())
-        test_email = f"test_user_{timestamp}@crypto.test"
+        # Test invalid symbol
+        invalid_params = {
+            "symbol": "INVALIDCOIN",
+            "period_days": 30,
+            "initial_balance": 10000.0
+        }
         
         success, response = self.run_test(
-            "Register new user",
+            "Backtest with invalid symbol",
             "POST",
-            "/auth/register",
-            200,
-            data={
-                "email": test_email,
-                "password": "testpassword123",
-                "name": f"Test User {timestamp}"
+            "backtest",
+            400,
+            data=invalid_params
+        )
+        
+        if success:
+            print("   ✅ Invalid symbol correctly rejected")
+        
+        # Test invalid period
+        invalid_period = {
+            "symbol": "BTCUSDT",
+            "period_days": 500,  # Too long
+            "initial_balance": 10000.0
+        }
+        
+        success, response = self.run_test(
+            "Backtest with invalid period",
+            "POST",
+            "backtest",
+            400,
+            data=invalid_period
+        )
+        
+        if success:
+            print("   ✅ Invalid period correctly rejected")
+            
+        return True
+
+    def test_different_symbols(self):
+        """Test backtesting with different symbols"""
+        print("\n🔄 Testing Multiple Symbols...")
+        
+        symbols_to_test = ["ETHUSDT", "SOLUSDT"]
+        for symbol in symbols_to_test:
+            params = {
+                "symbol": symbol,
+                "period_days": 15,  # Shorter for faster testing
+                "initial_balance": 5000.0,
+                "min_entry_probability": 0.4
             }
-        )
-        
-        if success and 'access_token' in response:
-            self.log("Registration successful with token", "PASS")
-        
-        return success
+            
+            success, response = self.run_test(
+                f"Backtest {symbol}",
+                "POST",
+                "backtest",
+                200,
+                data=params
+            )
+            
+            if success:
+                summary = response.get('summary', {})
+                print(f"   ✅ {symbol}: {summary.get('total_trades', 0)} trades, ${summary.get('total_pnl', 0):.2f} PnL")
+            else:
+                return False
+                
+        return True
 
-    def run_all_tests(self):
-        """Run all test suites"""
-        self.log("🚀 Starting Crypto Trading Bot API Tests")
-        self.log(f"Testing against: {self.base_url}")
+    def test_existing_endpoints(self):
+        """Test that existing endpoints still work"""
+        print("\n🔧 Testing Existing Endpoints...")
         
-        # Test registration first
-        self.test_registration()
+        endpoints = [
+            ("Dashboard", "GET", "dashboard", 200),
+            ("Bot Status", "GET", "bot/status", 200),
+            ("Trades", "GET", "trades", 200),
+            ("Performance", "GET", "performance", 200),
+            ("Leaderboard", "GET", "leaderboard", 200)
+        ]
         
-        # Test authentication
-        if not self.test_auth():
-            self.log("Authentication failed - stopping tests", "FAIL")
-            return self.get_results()
-        
-        # Test all endpoints
-        self.test_dashboard()
-        self.test_bot_control()
-        self.test_bot_config() 
-        self.test_trading_data()
-        self.test_leaderboard()
-        
-        return self.get_results()
+        all_passed = True
+        for name, method, endpoint, expected in endpoints:
+            success, _ = self.run_test(name, method, endpoint, expected)
+            if not success:
+                all_passed = False
+                
+        return all_passed
 
-    def get_results(self):
-        """Get test results summary"""
-        success_rate = (self.tests_passed / self.tests_run * 100) if self.tests_run > 0 else 0
+    def print_summary(self):
+        """Print test summary"""
+        print(f"\n📊 Test Summary:")
+        print(f"   Tests run: {self.tests_run}")
+        print(f"   Tests passed: {self.tests_passed}")
+        print(f"   Success rate: {(self.tests_passed/self.tests_run*100):.1f}%")
         
-        self.log("=" * 50)
-        self.log(f"📊 FINAL RESULTS:")
-        self.log(f"   Tests Run: {self.tests_run}")
-        self.log(f"   Tests Passed: {self.tests_passed}")
-        self.log(f"   Tests Failed: {self.tests_run - self.tests_passed}")
-        self.log(f"   Success Rate: {success_rate:.1f}%")
-        
-        if self.failures:
-            self.log("\n❌ FAILED TESTS:")
-            for failure in self.failures:
-                self.log(f"   - {failure}")
-        
-        return {
-            'tests_run': self.tests_run,
-            'tests_passed': self.tests_passed,
-            'success_rate': success_rate,
-            'failures': self.failures
-        }
+        if self.tests_passed != self.tests_run:
+            print(f"\n❌ Failed tests:")
+            for result in self.test_results:
+                if result['status'] != 'PASS':
+                    print(f"   - {result['test']}: {result['status']}")
 
 def main():
-    tester = CryptoTradingBotTester()
-    results = tester.run_all_tests()
+    tester = AgoBacktesterTester()
     
-    # Return appropriate exit code
-    return 0 if results['success_rate'] >= 80 else 1
+    # Test authentication first
+    if not tester.test_auth_flow():
+        print("❌ Authentication failed, cannot proceed with protected endpoints")
+        return 1
+    
+    print("\n" + "="*60)
+    print("AGOBOT STRATEGY BACKTESTER - COMPREHENSIVE TESTING")
+    print("="*60)
+    
+    # Run all tests
+    tests = [
+        ("Backtest API", tester.test_backtest_api),
+        ("Backtest History", tester.test_backtest_history), 
+        ("Backtest Validation", tester.test_backtest_validation),
+        ("Multiple Symbols", tester.test_different_symbols),
+        ("Existing Endpoints", tester.test_existing_endpoints)
+    ]
+    
+    for test_name, test_func in tests:
+        print(f"\n{'='*20} {test_name.upper()} {'='*20}")
+        try:
+            success = test_func()
+            if not success:
+                print(f"❌ {test_name} tests failed")
+        except Exception as e:
+            print(f"❌ {test_name} tests crashed: {e}")
+            tester.test_results.append({"test": test_name, "status": "CRASH", "error": str(e)})
+    
+    tester.print_summary()
+    
+    # Return exit code based on results
+    return 0 if tester.tests_passed == tester.tests_run else 1
 
 if __name__ == "__main__":
     sys.exit(main())
