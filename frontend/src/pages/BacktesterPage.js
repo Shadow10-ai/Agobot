@@ -418,18 +418,18 @@ export default function BacktesterPage({ user, onLogout }) {
                     color="#F59E0B"
                   />
                   <MetricCard
-                    label="Avg Win / Loss"
-                    value={`$${s.avg_win?.toFixed(2)}`}
-                    subvalue={`Avg Loss: $${s.avg_loss?.toFixed(2)}`}
+                    label="Fees + Slippage"
+                    value={`$${((s.total_fees || 0) + (s.total_slippage || 0)).toFixed(2)}`}
+                    subvalue={`Fees: $${(s.total_fees || 0).toFixed(2)} / Slip: $${(s.total_slippage || 0).toFixed(2)}`}
                     icon={Activity}
-                    color="#00F090"
+                    color="#FF2E5B"
                   />
                   <MetricCard
-                    label="Expectancy"
-                    value={`$${s.expectancy?.toFixed(2)}`}
-                    subvalue="Per trade expected"
-                    icon={Zap}
-                    color="#3B82F6"
+                    label="Vol Filter Rejects"
+                    value={s.signals_rejected_volume || 0}
+                    subvalue={`Regime changes: ${s.regime_changes || 0}`}
+                    icon={Shield}
+                    color="#8B5CF6"
                   />
                   <MetricCard
                     label="Streaks"
