@@ -98,6 +98,14 @@ function App() {
             }
           />
           <Route
+            path="/backtester"
+            element={
+              <ProtectedRoute>
+                <BacktesterPage user={user} onLogout={handleLogout} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/config"
             element={
               <ProtectedRoute>
