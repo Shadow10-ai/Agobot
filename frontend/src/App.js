@@ -7,6 +7,7 @@ import TradesPage from "@/pages/TradesPage";
 import ConfigPage from "@/pages/ConfigPage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import BacktesterPage from "@/pages/BacktesterPage";
+import ComparePage from "@/pages/ComparePage";
 import { Toaster } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
