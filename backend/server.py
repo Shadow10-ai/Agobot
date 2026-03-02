@@ -87,6 +87,7 @@ class BotConfigUpdate(BaseModel):
     min_entry_probability: Optional[float] = None
     trailing_stop_activate_pips: Optional[float] = None
     trailing_stop_distance_pips: Optional[float] = None
+    allow_short: Optional[bool] = None
 
 class TelegramConfig(BaseModel):
     telegram_token: str = ""
@@ -492,7 +493,7 @@ def generate_candles(symbol, count=60):
     SYMBOL_PRICES[symbol] = round(candles[-1]['close'], 8)
     return candles
 
-def calculate_signal(symbol, candles=None):
+def calculate_signal(symbol, candles=None, allow_short=False):
     if candles is None:
         candles = generate_candles(symbol, 60)
     closes = [c['close'] for c in candles]
@@ -508,13 +509,13 @@ def calculate_signal(symbol, candles=None):
     if not all([fast_ema, slow_ema, rsi, macd, bb, atr]):
         return None
     
-    # NEW: Volume filter — reject low volume signals
+    # Volume filter
     vol_passes, vol_ratio = volume_filter(candles, multiplier=1.2)
     
-    # NEW: Volatility regime detection
+    # Volatility regime detection
     regime, vol_percentile, regime_size_mult = volatility_regime(candles)
     
-    # Multi-timeframe structure check (use earlier candles for structure)
+    # Structure check
     structure_candles = candles[-10:-2]
     if len(structure_candles) >= 2:
         if structure_candles[-1]['high'] > structure_candles[-2]['high'] and structure_candles[-1]['low'] > structure_candles[-2]['low']:
@@ -526,57 +527,86 @@ def calculate_signal(symbol, candles=None):
     else:
         trend = 'RANGE'
     
-    # Sweep check on most recent candles
+    # Sweep check
     sweep_signal = None
     if candles[-1]['low'] < candles[-2]['low'] and candles[-1]['close'] > candles[-2]['low']:
         sweep_signal = 'BUY_SWEEP'
+    elif candles[-1]['high'] > candles[-2]['high'] and candles[-1]['close'] < candles[-2]['high']:
+        sweep_signal = 'SELL_SWEEP'
     elif fast_ema > slow_ema:
         sweep_signal = 'EMA_BULLISH'
+    elif fast_ema < slow_ema:
+        sweep_signal = 'EMA_BEARISH'
     
-    # Buy signals: uptrend + sweep, or strong EMA signal
+    # --- Determine signal side ---
+    side = None
+    
+    # LONG signals
     has_buy_signal = (
         (trend == 'UPTREND' and sweep_signal in ['BUY_SWEEP', 'EMA_BULLISH']) or
         (trend != 'DOWNTREND' and sweep_signal == 'BUY_SWEEP') or
         (fast_ema > slow_ema and rsi < 60 and rsi > 35)
     )
+    if has_buy_signal and rsi <= 70:
+        side = 'LONG'
     
-    if not has_buy_signal:
+    # SHORT signals (only if allowed and no LONG signal)
+    if side is None and allow_short:
+        has_sell_signal = (
+            (trend == 'DOWNTREND' and sweep_signal in ['SELL_SWEEP', 'EMA_BEARISH']) or
+            (trend != 'UPTREND' and sweep_signal == 'SELL_SWEEP') or
+            (fast_ema < slow_ema and rsi > 40 and rsi < 65)
+        )
+        if has_sell_signal and rsi >= 30:
+            side = 'SHORT'
+    
+    if side is None:
         return None
     
-    if rsi > 70:
-        return None
-    
-    # Probability calculation — includes volume and regime factors
+    # Probability scoring
     bb_pos = (current_price - bb['middle']) / (bb['upper'] - bb['middle']) if bb['upper'] != bb['middle'] else 0
     momentum = (fast_ema - slow_ema) / current_price * 100
     vol_bonus = min(0.15, (vol_ratio - 1) * 0.1) if vol_passes else -0.1
     regime_penalty = -0.1 if regime == 'HIGH_VOL' else (0.05 if regime == 'NORMAL' else -0.05)
     
-    # Scoring: each component contributes to raw score (0-1 scale)
     scores = []
-    scores.append(1.0 if trend == 'UPTREND' else (0.5 if trend == 'RANGE' else 0.0))  # trend
-    scores.append(max(0, min(1, 0.5 + momentum * 5)))  # momentum
-    scores.append(max(0, min(1, (60 - rsi) / 30)) if rsi < 60 else 0)  # RSI not overbought
-    scores.append(1.0 if sweep_signal == 'BUY_SWEEP' else (0.6 if sweep_signal == 'EMA_BULLISH' else 0.0))  # sweep
-    scores.append(max(0, min(1, 0.5 - bb_pos * 0.5)))  # BB position (lower = better)
-    scores.append(max(0, min(1, vol_bonus + 0.5)))  # volume
-    scores.append(max(0, min(1, 0.5 + regime_penalty)))  # regime
+    if side == 'LONG':
+        scores.append(1.0 if trend == 'UPTREND' else (0.5 if trend == 'RANGE' else 0.0))
+        scores.append(max(0, min(1, 0.5 + momentum * 5)))
+        scores.append(max(0, min(1, (60 - rsi) / 30)) if rsi < 60 else 0)
+        scores.append(1.0 if sweep_signal == 'BUY_SWEEP' else (0.6 if sweep_signal == 'EMA_BULLISH' else 0.0))
+        scores.append(max(0, min(1, 0.5 - bb_pos * 0.5)))
+    else:  # SHORT
+        scores.append(1.0 if trend == 'DOWNTREND' else (0.5 if trend == 'RANGE' else 0.0))
+        scores.append(max(0, min(1, 0.5 - momentum * 5)))  # negative momentum is good for shorts
+        scores.append(max(0, min(1, (rsi - 40) / 30)) if rsi > 40 else 0)
+        scores.append(1.0 if sweep_signal == 'SELL_SWEEP' else (0.6 if sweep_signal == 'EMA_BEARISH' else 0.0))
+        scores.append(max(0, min(1, 0.5 + bb_pos * 0.5)))  # higher BB = better for short
     
-    # Weighted average → scale to probability range [0.25, 0.92]
+    scores.append(max(0, min(1, vol_bonus + 0.5)))
+    scores.append(max(0, min(1, 0.5 + regime_penalty)))
+    
     weights = [0.22, 0.18, 0.15, 0.15, 0.10, 0.10, 0.10]
     raw_score = sum(s * w for s, w in zip(scores, weights))
-    prob = 0.25 + raw_score * 0.67  # Maps 0→0.25, 1→0.92
+    prob = 0.25 + raw_score * 0.67
     
-    # Structure-based stop loss
-    struct_sl = structure_stop_loss(candles, 'LONG', atr)
-    sl_distance = atr * 1.2
-    # Use the tighter of structure SL and ATR SL
-    sl = max(struct_sl, current_price - sl_distance) if struct_sl else current_price - sl_distance
-    tp_distance = atr * 2.4
-    tp = current_price + tp_distance
+    # SL/TP based on side
+    if side == 'LONG':
+        struct_sl = structure_stop_loss(candles, 'LONG', atr)
+        sl_distance = atr * 1.2
+        sl = max(struct_sl, current_price - sl_distance) if struct_sl else current_price - sl_distance
+        tp = current_price + atr * 2.4
+    else:  # SHORT
+        highs = [c['high'] for c in candles[-10:]]
+        swing_high = max(highs)
+        sl = swing_high + (atr * 0.3) if atr else swing_high * 1.002
+        sl = max(sl, current_price + atr * 1.2)  # at least 1.2 ATR above
+        tp = current_price - atr * 2.4
+        tp = max(tp, current_price * 0.5)  # safety floor
     
     return {
         "symbol": symbol,
+        "side": side,
         "price": current_price,
         "probability": prob,
         "rsi": rsi,
@@ -634,6 +664,7 @@ async def bot_scan_loop():
             symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT'])
             min_prob = config.get("min_entry_probability", 0.65)
             base_usdt = config.get("base_usdt_per_trade", 50)
+            allow_short = config.get("allow_short", False)
             
             # --- Update prices ---
             if is_live:
@@ -653,54 +684,74 @@ async def bot_scan_loop():
             positions = await db.positions.find({"status": "OPEN"}, {"_id": 0}).to_list(100)
             for pos in positions:
                 symbol = pos["symbol"]
+                pos_side = pos.get("side", "LONG")
                 current_price = SYMBOL_PRICES.get(symbol, pos["entry_price"])
                 
                 exit_reason = None
                 exit_price = current_price
                 
-                if current_price <= pos["stop_loss"]:
-                    exit_reason = "STOP_LOSS"
-                    exit_price = pos["stop_loss"]
-                elif current_price >= pos["take_profit"]:
-                    exit_reason = "TAKE_PROFIT"
-                    exit_price = pos["take_profit"]
+                if pos_side == "LONG":
+                    if current_price <= pos["stop_loss"]:
+                        exit_reason = "STOP_LOSS"
+                        exit_price = pos["stop_loss"]
+                    elif current_price >= pos["take_profit"]:
+                        exit_reason = "TAKE_PROFIT"
+                        exit_price = pos["take_profit"]
+                else:  # SHORT
+                    if current_price >= pos["stop_loss"]:
+                        exit_reason = "STOP_LOSS"
+                        exit_price = pos["stop_loss"]
+                    elif current_price <= pos["take_profit"]:
+                        exit_reason = "TAKE_PROFIT"
+                        exit_price = pos["take_profit"]
                 
                 # Trailing stop check
                 if not exit_reason and pos.get("trail_activated"):
                     trail_distance = pos["atr"] * config.get("trailing_stop_distance_pips", 1.2)
-                    new_sl = current_price - trail_distance
-                    if new_sl > pos["stop_loss"]:
-                        await db.positions.update_one(
-                            {"id": pos["id"]},
-                            {"$set": {"stop_loss": round(new_sl, 8)}}
-                        )
-                    if current_price <= pos["stop_loss"]:
-                        exit_reason = "TRAIL_STOP"
-                        exit_price = pos["stop_loss"]
+                    if pos_side == "LONG":
+                        new_sl = current_price - trail_distance
+                        if new_sl > pos["stop_loss"]:
+                            await db.positions.update_one({"id": pos["id"]}, {"$set": {"stop_loss": round(new_sl, 8)}})
+                        if current_price <= pos["stop_loss"]:
+                            exit_reason = "TRAIL_STOP"
+                            exit_price = pos["stop_loss"]
+                    else:  # SHORT trailing — stop moves down
+                        new_sl = current_price + trail_distance
+                        if new_sl < pos["stop_loss"]:
+                            await db.positions.update_one({"id": pos["id"]}, {"$set": {"stop_loss": round(new_sl, 8)}})
+                        if current_price >= pos["stop_loss"]:
+                            exit_reason = "TRAIL_STOP"
+                            exit_price = pos["stop_loss"]
                 
                 # Activate trailing
                 if not exit_reason and not pos.get("trail_activated"):
-                    activation = pos["entry_price"] + pos["atr"] * config.get("trailing_stop_activate_pips", 2.4)
-                    if current_price >= activation:
-                        await db.positions.update_one(
-                            {"id": pos["id"]},
-                            {"$set": {"trail_activated": True}}
-                        )
+                    activation_atr = pos["atr"] * config.get("trailing_stop_activate_pips", 2.4)
+                    if pos_side == "LONG":
+                        if current_price >= pos["entry_price"] + activation_atr:
+                            await db.positions.update_one({"id": pos["id"]}, {"$set": {"trail_activated": True}})
+                    else:  # SHORT
+                        if current_price <= pos["entry_price"] - activation_atr:
+                            await db.positions.update_one({"id": pos["id"]}, {"$set": {"trail_activated": True}})
                 
                 # Close position
                 if exit_reason:
-                    # In LIVE mode, place a real sell order
+                    # In LIVE mode, close the real position
                     if is_live and pos.get("mode") == "LIVE":
                         try:
-                            sell_qty = pos["quantity"]
-                            sell_result = await place_live_market_order(symbol, "SELL", sell_qty * exit_price)
-                            exit_price = sell_result.get("avg_price", exit_price)
-                            logger.info(f"LIVE SELL {symbol}: order {sell_result['order_id']}, filled {sell_result['executed_qty']}")
+                            close_side = "SELL" if pos_side == "LONG" else "BUY"
+                            close_result = await place_live_market_order(symbol, close_side, pos["quantity"] * exit_price)
+                            exit_price = close_result.get("avg_price", exit_price)
+                            logger.info(f"LIVE {close_side} {symbol}: order {close_result['order_id']}, filled {close_result['executed_qty']}")
                         except Exception as e:
-                            logger.error(f"LIVE sell failed for {symbol}, using market price: {e}")
+                            logger.error(f"LIVE close failed for {symbol}, using market price: {e}")
                     
-                    pnl = (exit_price - pos["entry_price"]) * pos["quantity"]
-                    pnl_percent = ((exit_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                    # PnL calculation — side-aware
+                    if pos_side == "LONG":
+                        pnl = (exit_price - pos["entry_price"]) * pos["quantity"]
+                        pnl_percent = ((exit_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                    else:  # SHORT
+                        pnl = (pos["entry_price"] - exit_price) * pos["quantity"]
+                        pnl_percent = ((pos["entry_price"] - exit_price) / pos["entry_price"]) * 100
                     
                     now = datetime.now(timezone.utc).isoformat()
                     await db.positions.update_one(
@@ -711,7 +762,7 @@ async def bot_scan_loop():
                     trade_doc = {
                         "id": str(uuid.uuid4()),
                         "symbol": symbol,
-                        "side": "LONG",
+                        "side": pos_side,
                         "entry_price": pos["entry_price"],
                         "exit_price": round(exit_price, 8),
                         "quantity": pos["quantity"],
@@ -734,8 +785,13 @@ async def bot_scan_loop():
                     
                     logger.info(f"[{pos.get('mode','DRY')}] Closed {symbol} via {exit_reason}: PnL {pnl:.4f} USDT")
                 else:
-                    unrealized = (current_price - pos["entry_price"]) * pos["quantity"]
-                    unrealized_pct = ((current_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                    # Update unrealized PnL — side-aware
+                    if pos_side == "LONG":
+                        unrealized = (current_price - pos["entry_price"]) * pos["quantity"]
+                        unrealized_pct = ((current_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                    else:  # SHORT
+                        unrealized = (pos["entry_price"] - current_price) * pos["quantity"]
+                        unrealized_pct = ((pos["entry_price"] - current_price) / pos["entry_price"]) * 100
                     await db.positions.update_one(
                         {"id": pos["id"]},
                         {"$set": {"current_price": round(current_price, 8), "unrealized_pnl": round(unrealized, 4), "unrealized_pnl_percent": round(unrealized_pct, 4)}}
@@ -761,33 +817,35 @@ async def bot_scan_loop():
                         except Exception as e:
                             logger.warning(f"Failed to fetch live candles for {symbol}, falling back to simulated: {e}")
                     
-                    signal = calculate_signal(symbol, candles_for_signal)
+                    signal = calculate_signal(symbol, candles_for_signal, allow_short=allow_short)
                     if signal and signal["probability"] >= min_prob:
                         if not signal.get("volume_passes", True):
                             logger.info(f"Skipping {symbol}: low volume (ratio: {signal.get('volume_ratio', 0)})")
                             continue
                         
+                        signal_side = signal.get("side", "LONG")
                         regime_mult = signal.get("regime_size_multiplier", 1.0)
                         adjusted_usdt = base_usdt * regime_mult
                         quantity = round(adjusted_usdt / signal["price"], 8)
                         entry_price = signal["price"]
                         
-                        # In LIVE mode, place a real buy order
+                        # In LIVE mode, place a real order
                         if is_live:
                             try:
-                                buy_result = await place_live_market_order(symbol, "BUY", adjusted_usdt)
-                                quantity = buy_result["executed_qty"]
-                                entry_price = buy_result["avg_price"]
-                                logger.info(f"LIVE BUY {symbol}: order {buy_result['order_id']}, filled {quantity} @ {entry_price}")
+                                order_side = "BUY" if signal_side == "LONG" else "SELL"
+                                result = await place_live_market_order(symbol, order_side, adjusted_usdt)
+                                quantity = result["executed_qty"]
+                                entry_price = result["avg_price"]
+                                logger.info(f"LIVE {order_side} {symbol}: order {result['order_id']}, filled {quantity} @ {entry_price}")
                             except Exception as e:
-                                logger.error(f"LIVE buy failed for {symbol}: {e}")
+                                logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}")
                                 continue
                         
                         now = datetime.now(timezone.utc).isoformat()
                         position_doc = {
                             "id": str(uuid.uuid4()),
                             "symbol": symbol,
-                            "side": "LONG",
+                            "side": signal_side,
                             "entry_price": round(entry_price, 8),
                             "current_price": round(entry_price, 8),
                             "stop_loss": round(signal["sl"], 8),
@@ -807,7 +865,7 @@ async def bot_scan_loop():
                             "correlation_group": corr_info["group"]
                         }
                         await db.positions.insert_one(position_doc)
-                        logger.info(f"[{current_mode}] Opened LONG {symbol} @ {entry_price:.8f}, Prob: {signal['probability']:.2%}")
+                        logger.info(f"[{current_mode}] Opened {signal_side} {symbol} @ {entry_price:.8f}, Prob: {signal['probability']:.2%}")
                         break
             
             bot_state["scan_count"] += 1
@@ -846,6 +904,7 @@ async def get_default_config():
         "trailing_stop_activate_pips": 2.4,
         "trailing_stop_distance_pips": 1.2,
         "mode": "DRY",
+        "allow_short": False,
         "telegram_token": "",
         "telegram_chat_id": ""
     }

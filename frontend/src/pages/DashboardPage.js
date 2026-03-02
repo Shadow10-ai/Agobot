@@ -61,8 +61,8 @@ const PositionCard = ({ position, onClose }) => {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold">{position.symbol}</span>
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
-            LONG
+          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${position.side === 'SHORT' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+            {position.side || 'LONG'}
           </span>
         </div>
         <button
@@ -144,8 +144,8 @@ const TradeRow = ({ trade }) => {
         <span className="text-xs font-bold">{trade.symbol}</span>
       </td>
       <td className="py-2.5 px-3">
-        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
-          LONG
+        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${trade.side === 'SHORT' ? 'bg-orange-500/10 text-orange-400' : 'bg-blue-500/10 text-blue-400'}`}>
+          {trade.side || 'LONG'}
         </span>
       </td>
       <td className="py-2.5 px-3 font-mono text-xs">

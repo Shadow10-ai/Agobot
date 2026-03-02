@@ -73,6 +73,7 @@ export default function ConfigPage({ user, onLogout }) {
         min_entry_probability: config.min_entry_probability,
         trailing_stop_activate_pips: config.trailing_stop_activate_pips,
         trailing_stop_distance_pips: config.trailing_stop_distance_pips,
+        allow_short: config.allow_short,
       };
       await api.put("/bot/config", payload);
       toast.success("Configuration saved");
@@ -297,6 +298,66 @@ export default function ConfigPage({ user, onLogout }) {
             </div>
           </div>
         )}
+
+        {/* Short Selling Toggle */}
+        <div
+          data-testid="short-toggle-section"
+          className={`relative overflow-hidden rounded-lg border p-5 ${
+            config?.allow_short
+              ? "bg-orange-500/5 border-orange-500/20"
+              : "bg-zinc-800/50 border-white/5"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${config?.allow_short ? "bg-orange-500/15" : "bg-zinc-700/50"}`}>
+                <span className="text-sm font-bold" style={{ fontFamily: "monospace" }}>{config?.allow_short ? "S" : "L"}</span>
+              </div>
+              <div>
+                <div className="text-sm font-semibold flex items-center gap-2">
+                  Short Selling
+                  <span
+                    data-testid="short-badge"
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider ${
+                      config?.allow_short
+                        ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                        : "bg-zinc-700/50 text-zinc-500 border border-zinc-600"
+                    }`}
+                  >
+                    {config?.allow_short ? "ENABLED" : "LONG ONLY"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-0.5">
+                  {config?.allow_short
+                    ? "Bot will open SHORT positions in downtrends. Higher risk, profits in both directions."
+                    : "Bot only opens LONG positions. Safer — profits when market goes up."}
+                </p>
+              </div>
+            </div>
+            <button
+              data-testid="short-toggle-btn"
+              onClick={() => handleChange("allow_short", !config?.allow_short)}
+              className={`relative w-12 h-6 rounded-full transition-colors ${
+                config?.allow_short ? "bg-orange-500" : "bg-zinc-700"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                  config?.allow_short ? "translate-x-6" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          </div>
+          {config?.allow_short && (
+            <div className="mt-3 p-2.5 bg-orange-500/5 rounded border border-orange-500/10 flex items-start gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-orange-400 mt-0.5 flex-shrink-0" />
+              <p className="text-[10px] text-zinc-400 leading-relaxed">
+                Short selling has <strong className="text-orange-300">unlimited loss potential</strong> — price can rise indefinitely. 
+                Safety limits (SL, daily loss cap) still apply. Save config to activate.
+              </p>
+            </div>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Trading Parameters */}
