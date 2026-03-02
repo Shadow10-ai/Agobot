@@ -1776,6 +1776,25 @@ async def get_price_history(symbol: str, user=Depends(get_current_user)):
     return data
 
 # ====================================================================
+# HEALTH CHECK
+# ====================================================================
+
+@api_router.get("/health")
+async def health_check():
+    """Kubernetes liveness/readiness probe endpoint."""
+    try:
+        await db.command("ping")
+        db_status = "connected"
+    except Exception:
+        db_status = "disconnected"
+    return {
+        "status": "ok",
+        "database": db_status,
+        "bot_running": bot_state["running"],
+        "mode": bot_state["mode"]
+    }
+
+# ====================================================================
 # APP SETUP
 # ====================================================================
 
@@ -1791,27 +1810,45 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    # Ensure indexes
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("id", unique=True)
-    await db.positions.create_index("id")
-    await db.positions.create_index("status")
-    await db.trades.create_index("closed_at")
-    await db.bot_state.create_index("key", unique=True)
+    # Ensure indexes — graceful, won't crash if they already exist
+    try:
+        await db.users.create_index("email", unique=True)
+        await db.users.create_index("id", unique=True)
+        await db.positions.create_index("id")
+        await db.positions.create_index("status")
+        await db.trades.create_index("closed_at")
+        await db.bot_state.create_index("key", unique=True)
+        logger.info("Database indexes ensured successfully")
+    except Exception as e:
+        logger.warning(f"Index creation warning (non-fatal): {e}")
     
     # Initialize default config if not exists
-    config = await db.bot_config.find_one({"active": True})
-    if not config:
-        await get_default_config()
+    try:
+        config = await db.bot_config.find_one({"active": True})
+        if not config:
+            await get_default_config()
+    except Exception as e:
+        logger.error(f"Failed to initialize bot config: {e}")
     
     # Initialize balance
-    bal = await db.bot_state.find_one({"key": "account_balance"})
-    if not bal:
-        await db.bot_state.update_one({"key": "account_balance"}, {"$set": {"value": 10000.0}}, upsert=True)
+    try:
+        bal = await db.bot_state.find_one({"key": "account_balance"})
+        if not bal:
+            await db.bot_state.update_one({"key": "account_balance"}, {"$set": {"value": 10000.0}}, upsert=True)
+    except Exception as e:
+        logger.error(f"Failed to initialize balance: {e}")
     
-    # Auto-start bot
-    await start_bot()
-    logger.info("Application started, bot auto-started in DRY mode")
+    # Defensive bot auto-start: only if DB is reachable and config exists
+    try:
+        await db.command("ping")
+        config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+        if config:
+            await start_bot()
+            logger.info("Application started, bot auto-started in DRY mode")
+        else:
+            logger.warning("Bot not auto-started: no active config found")
+    except Exception as e:
+        logger.error(f"Bot auto-start skipped due to error: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():

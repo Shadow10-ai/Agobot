@@ -215,7 +215,7 @@ export default function DashboardPage({ user, onLogout }) {
 
   useEffect(() => {
     fetchData();
-    intervalRef.current = setInterval(fetchData, 8000);
+    intervalRef.current = setInterval(fetchData, 30000);
     return () => clearInterval(intervalRef.current);
   }, [fetchData]);
 
