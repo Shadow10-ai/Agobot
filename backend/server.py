@@ -546,21 +546,26 @@ def calculate_signal(symbol, candles=None):
     if rsi > 70:
         return None
     
-    # Probability calculation — now includes volume and regime factors
+    # Probability calculation — includes volume and regime factors
     bb_pos = (current_price - bb['middle']) / (bb['upper'] - bb['middle']) if bb['upper'] != bb['middle'] else 0
     momentum = (fast_ema - slow_ema) / current_price * 100
     vol_bonus = min(0.15, (vol_ratio - 1) * 0.1) if vol_passes else -0.1
     regime_penalty = -0.1 if regime == 'HIGH_VOL' else (0.05 if regime == 'NORMAL' else -0.05)
     
-    z = (0.25 * momentum + 0.15 * (1 if trend == 'UPTREND' else 0.5) 
-         - 0.05 * (atr / current_price * 100) 
-         + 0.12 * (50 - abs(rsi - 50)) / 50 
-         + 0.08 * max(-1, min(1, bb_pos)) 
-         + 0.1 * (1 if sweep_signal == 'BUY_SWEEP' else 0.5)
-         + 0.15 * vol_bonus
-         + 0.1 * regime_penalty)
-    z = max(-5, min(5, z))
-    prob = 1 / (1 + math.exp(-z))
+    # Scoring: each component contributes to raw score (0-1 scale)
+    scores = []
+    scores.append(1.0 if trend == 'UPTREND' else (0.5 if trend == 'RANGE' else 0.0))  # trend
+    scores.append(max(0, min(1, 0.5 + momentum * 5)))  # momentum
+    scores.append(max(0, min(1, (60 - rsi) / 30)) if rsi < 60 else 0)  # RSI not overbought
+    scores.append(1.0 if sweep_signal == 'BUY_SWEEP' else (0.6 if sweep_signal == 'EMA_BULLISH' else 0.0))  # sweep
+    scores.append(max(0, min(1, 0.5 - bb_pos * 0.5)))  # BB position (lower = better)
+    scores.append(max(0, min(1, vol_bonus + 0.5)))  # volume
+    scores.append(max(0, min(1, 0.5 + regime_penalty)))  # regime
+    
+    # Weighted average → scale to probability range [0.25, 0.92]
+    weights = [0.22, 0.18, 0.15, 0.15, 0.10, 0.10, 0.10]
+    raw_score = sum(s * w for s, w in zip(scores, weights))
+    prob = 0.25 + raw_score * 0.67  # Maps 0→0.25, 1→0.92
     
     # Structure-based stop loss
     struct_sl = structure_stop_loss(candles, 'LONG', atr)
