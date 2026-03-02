@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
-import { Save, RotateCcw, AlertTriangle, Check, Settings, Bell } from "lucide-react";
+import { Save, RotateCcw, AlertTriangle, Check, Settings, Bell, Shield, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 const InputField = ({ label, name, value, onChange, type = "number", step, min, max, description }) => (
@@ -27,14 +27,21 @@ export default function ConfigPage({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingTg, setSavingTg] = useState(false);
+  const [modeInfo, setModeInfo] = useState({ mode: "DRY", binance_connected: false, binance_keys_configured: false });
+  const [showLiveConfirm, setShowLiveConfirm] = useState(false);
+  const [switchingMode, setSwitchingMode] = useState(false);
 
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await api.get("/bot/config");
-      setConfig(res.data);
+      const [configRes, modeRes] = await Promise.all([
+        api.get("/bot/config"),
+        api.get("/bot/mode")
+      ]);
+      setConfig(configRes.data);
+      setModeInfo(modeRes.data);
       setTelegram({
-        telegram_token: res.data.telegram_token || "",
-        telegram_chat_id: res.data.telegram_chat_id || ""
+        telegram_token: configRes.data.telegram_token || "",
+        telegram_chat_id: configRes.data.telegram_chat_id || ""
       });
     } catch (err) {
       console.error("Failed to fetch config:", err);
@@ -88,6 +95,28 @@ export default function ConfigPage({ user, onLogout }) {
     }
   };
 
+  const handleModeToggle = async (newMode) => {
+    if (newMode === "LIVE") {
+      setShowLiveConfirm(true);
+      return;
+    }
+    await switchMode("DRY");
+  };
+
+  const switchMode = async (mode) => {
+    setSwitchingMode(true);
+    try {
+      const res = await api.put("/bot/mode", { mode });
+      setModeInfo((prev) => ({ ...prev, mode: res.data.mode }));
+      toast.success(res.data.message);
+      setShowLiveConfirm(false);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to switch mode");
+    } finally {
+      setSwitchingMode(false);
+    }
+  };
+
   const handleReset = () => {
     setConfig({
       ...config,
@@ -114,6 +143,8 @@ export default function ConfigPage({ user, onLogout }) {
       </AppLayout>
     );
   }
+
+  const isLive = modeInfo.mode === "LIVE";
 
   return (
     <AppLayout user={user} onLogout={onLogout}>
@@ -145,16 +176,127 @@ export default function ConfigPage({ user, onLogout }) {
           </div>
         </div>
 
-        {/* DRY Mode Banner */}
-        <div className="flex items-center gap-3 p-4 bg-yellow-500/5 border border-yellow-500/20 rounded-lg" data-testid="dry-mode-banner">
-          <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-          <div>
-            <div className="text-xs font-semibold text-yellow-400">DRY MODE ACTIVE</div>
-            <div className="text-[11px] text-zinc-500 mt-0.5">
-              No real funds are being traded. All orders are simulated.
+        {/* Trading Mode Toggle */}
+        <div
+          data-testid="mode-toggle-section"
+          className={`relative overflow-hidden rounded-lg border p-5 ${
+            isLive
+              ? "bg-red-500/5 border-red-500/30"
+              : "bg-emerald-500/5 border-emerald-500/20"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {isLive ? (
+                <Zap className="w-5 h-5 text-red-400" />
+              ) : (
+                <Shield className="w-5 h-5 text-emerald-400" />
+              )}
+              <div>
+                <div className="text-sm font-semibold flex items-center gap-2">
+                  Trading Mode
+                  <span
+                    data-testid="mode-badge"
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider ${
+                      isLive
+                        ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                        : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                    }`}
+                  >
+                    {modeInfo.mode}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-0.5">
+                  {isLive
+                    ? "LIVE MODE — Real orders are being placed on Binance with real funds."
+                    : "DRY MODE — All trades are simulated. No real funds are used."}
+                </p>
+                {!modeInfo.binance_keys_configured && (
+                  <p className="text-[10px] text-yellow-500 mt-1">
+                    Binance API keys not configured. LIVE mode unavailable.
+                  </p>
+                )}
+                {modeInfo.binance_keys_configured && !modeInfo.binance_connected && (
+                  <p className="text-[10px] text-yellow-500 mt-1">
+                    Binance client not connected. Check API keys.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                data-testid="mode-dry-btn"
+                onClick={() => handleModeToggle("DRY")}
+                disabled={!isLive || switchingMode}
+                className={`h-8 px-4 rounded-sm text-xs font-medium transition-colors ${
+                  !isLive
+                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                    : "bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700"
+                }`}
+              >
+                DRY
+              </button>
+              <button
+                data-testid="mode-live-btn"
+                onClick={() => handleModeToggle("LIVE")}
+                disabled={isLive || switchingMode || !modeInfo.binance_keys_configured}
+                className={`h-8 px-4 rounded-sm text-xs font-medium transition-colors ${
+                  isLive
+                    ? "bg-red-500/20 text-red-400 border border-red-500/40"
+                    : "bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                }`}
+              >
+                LIVE
+              </button>
             </div>
           </div>
         </div>
+
+        {/* LIVE Mode Confirmation Dialog */}
+        {showLiveConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" data-testid="live-confirm-overlay">
+            <div className="bg-[#121212] border border-red-500/30 rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl shadow-red-500/10" data-testid="live-confirm-dialog">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center">
+                  <AlertTriangle className="w-5 h-5 text-red-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-red-400">Switch to LIVE Trading?</h3>
+                  <p className="text-[11px] text-zinc-500">This action requires your confirmation</p>
+                </div>
+              </div>
+              <div className="space-y-2 mb-5 p-3 bg-red-500/5 rounded border border-red-500/10">
+                <p className="text-xs text-zinc-300 leading-relaxed">
+                  <strong className="text-red-400">Warning:</strong> Switching to LIVE mode will cause AgoBot to place{" "}
+                  <strong className="text-white">real buy and sell orders</strong> on Binance using your API keys.
+                </p>
+                <ul className="text-[11px] text-zinc-400 space-y-1 ml-3 list-disc">
+                  <li>Real USDT will be spent on trades</li>
+                  <li>Profits and losses will be real</li>
+                  <li>Safety limits (daily loss, drawdown) still apply</li>
+                  <li>You can switch back to DRY mode at any time</li>
+                </ul>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  data-testid="live-confirm-cancel"
+                  onClick={() => setShowLiveConfirm(false)}
+                  className="flex-1 h-9 rounded-sm border border-zinc-700 text-zinc-400 text-xs font-medium hover:bg-zinc-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  data-testid="live-confirm-proceed"
+                  onClick={() => switchMode("LIVE")}
+                  disabled={switchingMode}
+                  className="flex-1 h-9 rounded-sm bg-red-500 text-white text-xs font-bold hover:bg-red-600 disabled:opacity-50 transition-colors shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+                >
+                  {switchingMode ? "Switching..." : "Confirm — Go LIVE"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Trading Parameters */}

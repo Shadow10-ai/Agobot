@@ -15,6 +15,7 @@ from passlib.context import CryptContext
 import asyncio
 import random
 import math
+from binance import AsyncClient as BinanceAsyncClient
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -188,6 +189,11 @@ async def get_me(user=Depends(get_current_user)):
 # TRADING BOT ENGINE (DRY MODE SIMULATION)
 # ====================================================================
 
+# Binance async client (initialized on startup if keys are present)
+binance_client = None
+BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY', '')
+BINANCE_API_SECRET = os.environ.get('BINANCE_API_SECRET', '')
+
 VALID_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT']
 
 # Simulated price data
@@ -204,6 +210,79 @@ bot_state = {
     "scan_count": 0,
     "last_scan": None,
 }
+
+# ====================================================================
+# BINANCE LIVE MODE HELPERS
+# ====================================================================
+
+class ModeToggle(BaseModel):
+    mode: str  # "DRY" or "LIVE"
+
+async def init_binance_client():
+    """Initialize the Binance async client if API keys are available."""
+    global binance_client
+    if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+        logger.warning("Binance API keys not configured — LIVE mode unavailable")
+        return
+    try:
+        binance_client = await BinanceAsyncClient.create(
+            api_key=BINANCE_API_KEY,
+            api_secret=BINANCE_API_SECRET
+        )
+        logger.info("Binance async client initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize Binance client: {e}")
+        binance_client = None
+
+async def close_binance_client():
+    """Close the Binance async client."""
+    global binance_client
+    if binance_client:
+        await binance_client.close_connection()
+        binance_client = None
+        logger.info("Binance client connection closed")
+
+async def fetch_live_price(symbol: str) -> float:
+    """Fetch real-time price from Binance."""
+    if not binance_client:
+        raise RuntimeError("Binance client not initialized")
+    ticker = await binance_client.get_symbol_ticker(symbol=symbol)
+    return float(ticker["price"])
+
+async def fetch_live_candles(symbol: str, interval: str = "3m", limit: int = 60):
+    """Fetch real kline candles from Binance and return in our internal format."""
+    if not binance_client:
+        raise RuntimeError("Binance client not initialized")
+    raw = await binance_client.get_klines(symbol=symbol, interval=interval, limit=limit)
+    candles = []
+    for k in raw:
+        candles.append({
+            "open": float(k[1]),
+            "high": float(k[2]),
+            "low": float(k[3]),
+            "close": float(k[4]),
+            "volume": float(k[5]),
+            "time": int(k[0])
+        })
+    return candles
+
+async def place_live_market_order(symbol: str, side: str, quote_qty: float):
+    """Place a real market order on Binance. Returns order result dict."""
+    if not binance_client:
+        raise RuntimeError("Binance client not initialized")
+    order = await binance_client.create_order(
+        symbol=symbol,
+        side=side,
+        type="MARKET",
+        quoteOrderQty=quote_qty
+    )
+    return {
+        "order_id": order["orderId"],
+        "status": order["status"],
+        "executed_qty": float(order["executedQty"]),
+        "cummulative_quote_qty": float(order["cummulativeQuoteQty"]),
+        "avg_price": float(order["cummulativeQuoteQty"]) / float(order["executedQty"]) if float(order["executedQty"]) > 0 else 0,
+    }
 
 # ====================================================================
 # TECHNICAL INDICATORS (ported from Node.js)
@@ -413,8 +492,9 @@ def generate_candles(symbol, count=60):
     SYMBOL_PRICES[symbol] = round(candles[-1]['close'], 8)
     return candles
 
-def calculate_signal(symbol):
-    candles = generate_candles(symbol, 60)
+def calculate_signal(symbol, candles=None):
+    if candles is None:
+        candles = generate_candles(symbol, 60)
     closes = [c['close'] for c in candles]
     current_price = closes[-1]
     
@@ -528,7 +608,7 @@ def calculate_signal(symbol):
 # ====================================================================
 
 async def bot_scan_loop():
-    """Main bot scan loop - runs as background task"""
+    """Main bot scan loop - runs as background task. Supports DRY and LIVE modes."""
     logger.info("Bot scan loop started")
     
     while bot_state["running"]:
@@ -541,23 +621,35 @@ async def bot_scan_loop():
             if not config:
                 config = await get_default_config()
             
+            # Sync mode from config
+            current_mode = config.get("mode", "DRY")
+            bot_state["mode"] = current_mode
+            is_live = current_mode == "LIVE" and binance_client is not None
+            
             symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT'])
             min_prob = config.get("min_entry_probability", 0.65)
             base_usdt = config.get("base_usdt_per_trade", 50)
             
-            # Update simulated prices
-            for symbol in symbols:
-                if symbol in SYMBOL_PRICES:
-                    change = random.gauss(0, SYMBOL_PRICES[symbol] * 0.001)
-                    SYMBOL_PRICES[symbol] = round(max(0.01, SYMBOL_PRICES[symbol] + change), 8)
+            # --- Update prices ---
+            if is_live:
+                for symbol in symbols:
+                    try:
+                        live_price = await fetch_live_price(symbol)
+                        SYMBOL_PRICES[symbol] = live_price
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch live price for {symbol}: {e}")
+            else:
+                for symbol in symbols:
+                    if symbol in SYMBOL_PRICES:
+                        change = random.gauss(0, SYMBOL_PRICES[symbol] * 0.001)
+                        SYMBOL_PRICES[symbol] = round(max(0.01, SYMBOL_PRICES[symbol] + change), 8)
             
-            # Check existing positions
+            # --- Check existing positions ---
             positions = await db.positions.find({"status": "OPEN"}, {"_id": 0}).to_list(100)
             for pos in positions:
                 symbol = pos["symbol"]
                 current_price = SYMBOL_PRICES.get(symbol, pos["entry_price"])
                 
-                # Check SL/TP
                 exit_reason = None
                 exit_price = current_price
                 
@@ -592,6 +684,16 @@ async def bot_scan_loop():
                 
                 # Close position
                 if exit_reason:
+                    # In LIVE mode, place a real sell order
+                    if is_live and pos.get("mode") == "LIVE":
+                        try:
+                            sell_qty = pos["quantity"]
+                            sell_result = await place_live_market_order(symbol, "SELL", sell_qty * exit_price)
+                            exit_price = sell_result.get("avg_price", exit_price)
+                            logger.info(f"LIVE SELL {symbol}: order {sell_result['order_id']}, filled {sell_result['executed_qty']}")
+                        except Exception as e:
+                            logger.error(f"LIVE sell failed for {symbol}, using market price: {e}")
+                    
                     pnl = (exit_price - pos["entry_price"]) * pos["quantity"]
                     pnl_percent = ((exit_price - pos["entry_price"]) / pos["entry_price"]) * 100
                     
@@ -613,22 +715,20 @@ async def bot_scan_loop():
                         "exit_reason": exit_reason,
                         "opened_at": pos["opened_at"],
                         "closed_at": now,
-                        "mode": "DRY",
+                        "mode": pos.get("mode", "DRY"),
                         "stop_loss": pos["stop_loss"],
                         "take_profit": pos["take_profit"]
                     }
                     await db.trades.insert_one(trade_doc)
                     
-                    # Update daily PnL
                     await db.bot_state.update_one(
                         {"key": "daily_pnl"},
                         {"$inc": {"value": round(pnl, 4)}},
                         upsert=True
                     )
                     
-                    logger.info(f"Closed {symbol} via {exit_reason}: PnL {pnl:.4f} USDT")
+                    logger.info(f"[{pos.get('mode','DRY')}] Closed {symbol} via {exit_reason}: PnL {pnl:.4f} USDT")
                 else:
-                    # Update unrealized PnL
                     unrealized = (current_price - pos["entry_price"]) * pos["quantity"]
                     unrealized_pct = ((current_price - pos["entry_price"]) / pos["entry_price"]) * 100
                     await db.positions.update_one(
@@ -636,38 +736,55 @@ async def bot_scan_loop():
                         {"$set": {"current_price": round(current_price, 8), "unrealized_pnl": round(unrealized, 4), "unrealized_pnl_percent": round(unrealized_pct, 4)}}
                     )
             
-            # Look for new entries
+            # --- Look for new entries ---
             open_count = await db.positions.count_documents({"status": "OPEN"})
-            if open_count < 3:  # Reduced from 4 for correlation safety
+            if open_count < 3:
                 for symbol in symbols:
                     if await db.positions.find_one({"symbol": symbol, "status": "OPEN"}):
                         continue
                     
-                    # NEW: Check correlation exposure before entering
                     can_open, corr_info = await check_correlation_exposure(symbol, db)
                     if not can_open:
                         logger.info(f"Skipping {symbol}: correlation exposure ({corr_info['group']}, {corr_info['correlated_positions']} correlated)")
                         continue
                     
-                    signal = calculate_signal(symbol)
+                    # In LIVE mode, use real candles for signal calculation
+                    candles_for_signal = None
+                    if is_live:
+                        try:
+                            candles_for_signal = await fetch_live_candles(symbol, interval="3m", limit=60)
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch live candles for {symbol}, falling back to simulated: {e}")
+                    
+                    signal = calculate_signal(symbol, candles_for_signal)
                     if signal and signal["probability"] >= min_prob:
-                        # NEW: Skip low volume signals
                         if not signal.get("volume_passes", True):
                             logger.info(f"Skipping {symbol}: low volume (ratio: {signal.get('volume_ratio', 0)})")
                             continue
                         
-                        # NEW: Adjust quantity by volatility regime
                         regime_mult = signal.get("regime_size_multiplier", 1.0)
                         adjusted_usdt = base_usdt * regime_mult
                         quantity = round(adjusted_usdt / signal["price"], 8)
+                        entry_price = signal["price"]
+                        
+                        # In LIVE mode, place a real buy order
+                        if is_live:
+                            try:
+                                buy_result = await place_live_market_order(symbol, "BUY", adjusted_usdt)
+                                quantity = buy_result["executed_qty"]
+                                entry_price = buy_result["avg_price"]
+                                logger.info(f"LIVE BUY {symbol}: order {buy_result['order_id']}, filled {quantity} @ {entry_price}")
+                            except Exception as e:
+                                logger.error(f"LIVE buy failed for {symbol}: {e}")
+                                continue
                         
                         now = datetime.now(timezone.utc).isoformat()
                         position_doc = {
                             "id": str(uuid.uuid4()),
                             "symbol": symbol,
                             "side": "LONG",
-                            "entry_price": round(signal["price"], 8),
-                            "current_price": round(signal["price"], 8),
+                            "entry_price": round(entry_price, 8),
+                            "current_price": round(entry_price, 8),
                             "stop_loss": round(signal["sl"], 8),
                             "take_profit": round(signal["tp"], 8),
                             "quantity": quantity,
@@ -678,14 +795,14 @@ async def bot_scan_loop():
                             "unrealized_pnl": 0.0,
                             "unrealized_pnl_percent": 0.0,
                             "opened_at": now,
-                            "mode": "DRY",
+                            "mode": current_mode,
                             "indicators": signal["indicators"],
                             "volume_ratio": signal.get("volume_ratio", 0),
                             "volatility_regime": signal.get("volatility_regime", "NORMAL"),
                             "correlation_group": corr_info["group"]
                         }
                         await db.positions.insert_one(position_doc)
-                        logger.info(f"Opened LONG {symbol} @ {signal['price']:.8f}, Prob: {signal['probability']:.2%}, Vol: {signal.get('volume_ratio', 0)}x, Regime: {signal.get('volatility_regime', 'N/A')}")
+                        logger.info(f"[{current_mode}] Opened LONG {symbol} @ {entry_price:.8f}, Prob: {signal['probability']:.2%}")
                         break
             
             bot_state["scan_count"] += 1
@@ -699,7 +816,6 @@ async def bot_scan_loop():
                 }
                 await db.price_history.insert_one(price_snapshot)
                 
-                # Efficient cleanup: delete docs older than 24 hours using TTL-style approach
                 cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
                 await db.price_history.delete_many({"timestamp": {"$lt": cutoff}})
             
@@ -821,7 +937,41 @@ async def update_telegram_config(data: TelegramConfig, user=Depends(get_current_
     )
     return {"status": "updated"}
 
-# ====================================================================
+@api_router.put("/bot/mode")
+async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
+    """Switch between DRY and LIVE trading modes."""
+    mode = data.mode.upper()
+    if mode not in ("DRY", "LIVE"):
+        raise HTTPException(status_code=400, detail="Mode must be DRY or LIVE")
+    
+    if mode == "LIVE" and not binance_client:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot switch to LIVE mode: Binance API keys not configured or client failed to initialize"
+        )
+    
+    # Update config in DB
+    await db.bot_config.update_one({"active": True}, {"$set": {"mode": mode}}, upsert=True)
+    bot_state["mode"] = mode
+    
+    logger.info(f"Bot mode switched to {mode} by user {user.get('email', 'unknown')}")
+    
+    return {
+        "mode": mode,
+        "binance_connected": binance_client is not None,
+        "message": f"Bot is now in {mode} mode" + (" — real trades will be executed!" if mode == "LIVE" else " — trades are simulated.")
+    }
+
+@api_router.get("/bot/mode")
+async def get_bot_mode(user=Depends(get_current_user)):
+    """Get current trading mode and Binance connection status."""
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+    current_mode = config.get("mode", "DRY") if config else "DRY"
+    return {
+        "mode": current_mode,
+        "binance_connected": binance_client is not None,
+        "binance_keys_configured": bool(BINANCE_API_KEY and BINANCE_API_SECRET)
+    }
 # DASHBOARD API
 # ====================================================================
 
@@ -1838,13 +1988,17 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize balance: {e}")
     
+    # Initialize Binance client (for LIVE mode support)
+    await init_binance_client()
+    
     # Defensive bot auto-start: only if DB is reachable and config exists
     try:
         await db.command("ping")
         config = await db.bot_config.find_one({"active": True}, {"_id": 0})
         if config:
+            bot_state["mode"] = config.get("mode", "DRY")
             await start_bot()
-            logger.info("Application started, bot auto-started in DRY mode")
+            logger.info(f"Application started, bot auto-started in {bot_state['mode']} mode")
         else:
             logger.warning("Bot not auto-started: no active config found")
     except Exception as e:
@@ -1853,4 +2007,5 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     await stop_bot()
+    await close_binance_client()
     client.close()
