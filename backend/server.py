@@ -19,9 +19,19 @@ import math
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
+# MongoDB connection - production-ready with Atlas support
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=20,
+    minPoolSize=2,
+    maxIdleTimeMS=30000,
+    serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=30000,
+    retryWrites=True,
+    retryReads=True,
+)
 db = client[os.environ['DB_NAME']]
 
 # JWT config
@@ -681,20 +691,17 @@ async def bot_scan_loop():
             bot_state["scan_count"] += 1
             bot_state["last_scan"] = datetime.now(timezone.utc).isoformat()
             
-            # Save price snapshot for charts
-            price_snapshot = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "prices": {s: SYMBOL_PRICES.get(s, 0) for s in symbols}
-            }
-            await db.price_history.insert_one(price_snapshot)
-            
-            # Trim old price history (keep last 1000)
-            count = await db.price_history.count_documents({})
-            if count > 1000:
-                oldest = await db.price_history.find({}, {"_id": 1}).sort("_id", 1).limit(count - 1000).to_list(count - 1000)
-                if oldest:
-                    ids = [o["_id"] for o in oldest]
-                    await db.price_history.delete_many({"_id": {"$in": ids}})
+            # Save price snapshot for charts (throttled: every 3rd scan)
+            if bot_state["scan_count"] % 3 == 0:
+                price_snapshot = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "prices": {s: SYMBOL_PRICES.get(s, 0) for s in symbols}
+                }
+                await db.price_history.insert_one(price_snapshot)
+                
+                # Efficient cleanup: delete docs older than 24 hours using TTL-style approach
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+                await db.price_history.delete_many({"timestamp": {"$lt": cutoff}})
             
         except Exception as e:
             logger.error(f"Bot scan error: {e}")
