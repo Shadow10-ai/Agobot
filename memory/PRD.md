@@ -10,7 +10,7 @@ Build a trading app focused on crypto trading with autonomous execution. Ported 
 - **Auth**: JWT-based authentication
 - **Trading**: DRY mode simulation with technical indicators
 
-## What's Been Implemented (Mar 2026)
+## What's Been Implemented
 1. **Auth system**: Register, login, JWT token management
 2. **Dashboard**: Account balance, daily/total PnL, win rate, positions, price ticker, recent trades
 3. **Trading Bot Engine**: DRY mode with RSI, MACD, BB, ATR, EMA signals, SL/TP/trailing stops
@@ -18,7 +18,7 @@ Build a trading app focused on crypto trading with autonomous execution. Ported 
 5. **Configuration**: Trading params, indicator settings, Telegram config, symbol toggles
 6. **Performance Leaderboard**: Symbol rankings, best/worst trades, streaks, time/exit analysis
 7. **Strategy Backtester**: Historical replay with slippage, fees, volume filter, volatility regime
-8. **Robustness Improvements** (Latest):
+8. **Robustness Improvements**:
    - Volume filter: rejects low-volume signals (configurable multiplier)
    - Volatility regime detection: auto-reduces position size in high volatility
    - Correlation-aware sizing: prevents overexposure to correlated pairs
@@ -27,8 +27,30 @@ Build a trading app focused on crypto trading with autonomous execution. Ported 
 9. **Strategy Comparison**: Side-by-side comparison on identical price data with preset strategies
 10. **Binance API keys**: Stored in backend .env
 11. **Branding**: AgoBot
+12. **Production Readiness (Mar 2026)**:
+    - `/api/health` endpoint for Kubernetes liveness/readiness probes
+    - Graceful index creation (try/except, non-fatal)
+    - MongoDB connection with pooling, timeouts, retryWrites/retryReads
+    - Efficient price history cleanup (24h TTL-style)
+    - Reduced frontend polling (30s instead of 8s)
+    - Defensive bot auto-start (DB ping + config check)
+
+## Key API Endpoints
+- `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
+- `GET /api/health` (no auth)
+- `GET /api/dashboard`, `GET /api/bot/status`
+- `POST /api/bot/start`, `POST /api/bot/stop`, `POST /api/bot/pause`, `POST /api/bot/resume`
+- `GET/PUT /api/bot/config`, `PUT /api/bot/telegram`
+- `GET /api/positions`, `POST /api/positions/{id}/close`
+- `GET /api/trades`
+- `GET /api/performance`, `GET /api/leaderboard`
+- `POST /api/backtest`, `POST /api/compare`
+
+## Test Credentials
+- Email: user@example.com, Password: password
 
 ## Prioritized Backlog
 - P0: Switch from DRY to LIVE mode
 - P1: WebSocket real-time price updates, candlestick charts, walk-forward optimization
 - P2: Multi-exchange support, Monte Carlo simulation, news/event filter
+- P3: Refactor server.py (1800+ lines) into modular files (routes, models, bot engine)
