@@ -1031,6 +1031,215 @@ def generate_candles(symbol, count=60):
     SYMBOL_PRICES[symbol] = round(candles[-1]['close'], 8)
     return candles
 
+# ====================================================================
+# PHASE 3: PROFESSIONAL-GRADE FEATURES
+# ====================================================================
+
+# --- 1. DRAWDOWN CIRCUIT BREAKER ---
+_circuit_breaker = {
+    "peak_balance": 10000.0,
+    "tripped": False,
+    "tripped_at": None,
+    "drawdown_at_trip": 0.0,
+}
+
+async def check_circuit_breaker(db_ref, config):
+    """Check if drawdown exceeds threshold, auto-pause bot if so."""
+    max_dd = config.get("max_total_drawdown_percent", 5.0)
+    
+    bal_doc = await db_ref.bot_state.find_one({"key": "account_balance"})
+    current_balance = bal_doc["value"] if bal_doc else 10000.0
+    
+    if current_balance > _circuit_breaker["peak_balance"]:
+        _circuit_breaker["peak_balance"] = current_balance
+    
+    peak = _circuit_breaker["peak_balance"]
+    drawdown_pct = ((peak - current_balance) / peak) * 100 if peak > 0 else 0
+    
+    if drawdown_pct >= max_dd and not _circuit_breaker["tripped"]:
+        _circuit_breaker["tripped"] = True
+        _circuit_breaker["tripped_at"] = datetime.now(timezone.utc).isoformat()
+        _circuit_breaker["drawdown_at_trip"] = round(drawdown_pct, 2)
+        bot_state["paused"] = True
+        logger.warning(f"CIRCUIT BREAKER TRIPPED: Drawdown {drawdown_pct:.2f}% >= {max_dd}%. Bot paused.")
+        return False, round(drawdown_pct, 2)
+    
+    return True, round(drawdown_pct, 2)
+
+def reset_circuit_breaker():
+    """Manually reset the circuit breaker."""
+    _circuit_breaker["tripped"] = False
+    _circuit_breaker["tripped_at"] = None
+    _circuit_breaker["drawdown_at_trip"] = 0.0
+
+# --- 2. SESSION-AWARE TRADING ---
+TRADING_SESSIONS = {
+    "ASIA": {"start": 0, "end": 8},       # 00:00-08:00 UTC
+    "LONDON": {"start": 7, "end": 16},     # 07:00-16:00 UTC
+    "NYC": {"start": 13, "end": 22},       # 13:00-22:00 UTC
+    "OVERLAP": {"start": 13, "end": 16},   # 13:00-16:00 UTC (highest liquidity)
+}
+
+def check_trading_session(config):
+    """Check if current time falls within allowed trading sessions."""
+    allowed = config.get("allowed_sessions", ["ASIA", "LONDON", "NYC"])
+    if not allowed or "ALL" in allowed:
+        return True, "ALL"
+    
+    now_utc = datetime.now(timezone.utc)
+    current_hour = now_utc.hour
+    
+    for session_name in allowed:
+        session = TRADING_SESSIONS.get(session_name)
+        if not session:
+            continue
+        start, end = session["start"], session["end"]
+        if start <= end:
+            if start <= current_hour < end:
+                return True, session_name
+        else:  # Wraps around midnight
+            if current_hour >= start or current_hour < end:
+                return True, session_name
+    
+    return False, "OUTSIDE_SESSION"
+
+# --- 3. ADVANCED MARKET REGIME DETECTION ---
+def detect_market_regime_advanced(candles):
+    """Advanced market regime detection using multiple signals.
+    Returns: regime (TRENDING_UP, TRENDING_DOWN, RANGING, VOLATILE, CALM), 
+    strength (0-1), and details."""
+    if not candles or len(candles) < 30:
+        return "UNKNOWN", 0.5, {}
+    
+    closes = np.array([c['close'] for c in candles])
+    highs = np.array([c['high'] for c in candles])
+    lows = np.array([c['low'] for c in candles])
+    volumes = np.array([c['volume'] for c in candles])
+    
+    # 1. Trend strength via linear regression slope
+    x = np.arange(len(closes))
+    slope = np.polyfit(x, closes, 1)[0]
+    price_mean = np.mean(closes)
+    trend_strength = abs(slope / price_mean * 1000) if price_mean > 0 else 0  # Normalized
+    
+    # 2. Volatility (ATR-based)
+    ranges = highs - lows
+    atr = np.mean(ranges[-14:])
+    atr_pct = (atr / closes[-1] * 100) if closes[-1] > 0 else 0
+    
+    # 3. ADX-like directional indicator (simplified)
+    up_moves = np.diff(highs)
+    down_moves = -np.diff(lows)
+    plus_dm = np.where((up_moves > down_moves) & (up_moves > 0), up_moves, 0)
+    minus_dm = np.where((down_moves > up_moves) & (down_moves > 0), down_moves, 0)
+    adx_proxy = abs(np.mean(plus_dm[-14:]) - np.mean(minus_dm[-14:])) / max(atr, 0.0001)
+    
+    # 4. Volume trend
+    vol_recent = np.mean(volumes[-5:])
+    vol_avg = np.mean(volumes[-20:])
+    vol_expansion = vol_recent / vol_avg if vol_avg > 0 else 1.0
+    
+    # 5. Price range compression (Bollinger bandwidth)
+    bb_std = np.std(closes[-20:])
+    bb_bandwidth = (bb_std / price_mean * 100) if price_mean > 0 else 0
+    
+    # Classify regime
+    if atr_pct > 2.0 and vol_expansion > 1.5:
+        regime = "VOLATILE"
+        strength = min(1.0, atr_pct / 3.0)
+    elif trend_strength > 0.3 and adx_proxy > 0.3:
+        regime = "TRENDING_UP" if slope > 0 else "TRENDING_DOWN"
+        strength = min(1.0, trend_strength)
+    elif bb_bandwidth < 1.0 and atr_pct < 0.8:
+        regime = "CALM"
+        strength = min(1.0, 1.0 - bb_bandwidth)
+    else:
+        regime = "RANGING"
+        strength = 0.5
+    
+    details = {
+        "trend_slope": round(float(slope), 8),
+        "trend_strength": round(float(trend_strength), 4),
+        "atr_percent": round(float(atr_pct), 4),
+        "adx_proxy": round(float(adx_proxy), 4),
+        "volume_expansion": round(float(vol_expansion), 4),
+        "bb_bandwidth": round(float(bb_bandwidth), 4),
+    }
+    
+    return regime, round(float(strength), 4), details
+
+# --- 4. MONTE CARLO RISK ANALYSIS ---
+async def run_monte_carlo(db_ref, n_simulations=1000, n_trades_per_sim=100, initial_balance=10000):
+    """Run Monte Carlo simulation using historical trade distribution."""
+    trades = await db_ref.trades.find({}, {"_id": 0, "pnl": 1, "pnl_percent": 1}).to_list(5000)
+    if len(trades) < 10:
+        return {"error": "Need at least 10 historical trades", "trade_count": len(trades)}
+    
+    pnls = np.array([t["pnl"] for t in trades if t.get("pnl") is not None])
+    if len(pnls) < 10:
+        return {"error": "Not enough PnL data", "trade_count": len(pnls)}
+    
+    results = []
+    ruin_count = 0
+    max_drawdowns = []
+    
+    for _ in range(n_simulations):
+        balance = initial_balance
+        peak = balance
+        max_dd = 0
+        
+        sampled_pnls = np.random.choice(pnls, size=n_trades_per_sim, replace=True)
+        
+        for pnl in sampled_pnls:
+            balance += pnl
+            if balance > peak:
+                peak = balance
+            dd = (peak - balance) / peak * 100 if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+            if balance <= 0:
+                ruin_count += 1
+                break
+        
+        results.append(balance)
+        max_drawdowns.append(max_dd)
+    
+    results = np.array(results)
+    max_drawdowns = np.array(max_drawdowns)
+    
+    return {
+        "simulations": n_simulations,
+        "trades_per_sim": n_trades_per_sim,
+        "initial_balance": initial_balance,
+        "historical_trades_used": len(pnls),
+        "avg_pnl_per_trade": round(float(np.mean(pnls)), 4),
+        "win_rate": round(float(np.sum(pnls > 0) / len(pnls) * 100), 1),
+        "results": {
+            "mean_final_balance": round(float(np.mean(results)), 2),
+            "median_final_balance": round(float(np.median(results)), 2),
+            "std_final_balance": round(float(np.std(results)), 2),
+            "best_case": round(float(np.max(results)), 2),
+            "worst_case": round(float(np.min(results)), 2),
+            "percentile_5": round(float(np.percentile(results, 5)), 2),
+            "percentile_25": round(float(np.percentile(results, 25)), 2),
+            "percentile_75": round(float(np.percentile(results, 75)), 2),
+            "percentile_95": round(float(np.percentile(results, 95)), 2),
+        },
+        "risk": {
+            "probability_of_ruin": round(ruin_count / n_simulations * 100, 2),
+            "avg_max_drawdown": round(float(np.mean(max_drawdowns)), 2),
+            "median_max_drawdown": round(float(np.median(max_drawdowns)), 2),
+            "worst_drawdown": round(float(np.max(max_drawdowns)), 2),
+            "probability_profitable": round(float(np.sum(results > initial_balance) / n_simulations * 100), 2),
+        },
+        "distribution": {
+            "below_8000": round(float(np.sum(results < 8000) / n_simulations * 100), 2),
+            "8000_to_10000": round(float(np.sum((results >= 8000) & (results < 10000)) / n_simulations * 100), 2),
+            "10000_to_12000": round(float(np.sum((results >= 10000) & (results < 12000)) / n_simulations * 100), 2),
+            "above_12000": round(float(np.sum(results >= 12000) / n_simulations * 100), 2),
+        }
+    }
+
 def calculate_signal(symbol, candles=None, allow_short=False):
     if candles is None:
         candles = generate_candles(symbol, 60)
@@ -1342,14 +1551,43 @@ async def bot_scan_loop():
             # --- Increment cooldown counter ---
             increment_cooldown()
             
+            # --- Circuit Breaker Check ---
+            cb_ok, current_dd = await check_circuit_breaker(db, config)
+            if not cb_ok:
+                if bot_state["scan_count"] % 30 == 0:
+                    logger.warning(f"Circuit breaker active: {current_dd}% drawdown. Bot paused.")
+                await asyncio.sleep(10)
+                continue
+            
             # --- Look for new entries (with smart filters) ---
             open_count = await db.positions.count_documents({"status": "OPEN"})
             if open_count < 3:
-                # Gate 1: Overtrade limits
-                ot_ok, trades_hr, max_hr, trades_day, max_day = await check_overtrade_limits(db, config)
-                if not ot_ok:
-                    if bot_state["scan_count"] % 30 == 0:  # Log throttled
-                        logger.info(f"Overtrade limit: {trades_hr}/{max_hr} per hour, {trades_day}/{max_day} per day")
+                # Gate 0a: Session check
+                session_ok, active_session = check_trading_session(config)
+                if not session_ok:
+                    if bot_state["scan_count"] % 30 == 0:
+                        logger.info(f"Outside trading session (current: {active_session})")
+                elif True:  # Proceed with gates
+                    # Gate 0b: Advanced market regime (applied per-scan, not per-symbol)
+                    sample_symbol = symbols[0] if symbols else "BTCUSDT"
+                    sample_candles = generate_candles(sample_symbol, 60) if not is_live else None
+                    if is_live:
+                        try:
+                            sample_candles = await fetch_live_candles(sample_symbol, interval="3m", limit=60)
+                        except Exception:
+                            sample_candles = generate_candles(sample_symbol, 60)
+                    adv_regime, regime_strength, regime_details = detect_market_regime_advanced(sample_candles)
+                    
+                    # Skip trading in highly volatile regimes unless confidence is very high
+                    if adv_regime == "VOLATILE" and regime_strength > 0.8:
+                        if bot_state["scan_count"] % 10 == 0:
+                            logger.info(f"Market too volatile ({regime_strength:.2f}). Waiting for calmer conditions.")
+                    else:
+                        # Gate 1: Overtrade limits
+                        ot_ok, trades_hr, max_hr, trades_day, max_day = await check_overtrade_limits(db, config)
+                        if not ot_ok:
+                            if bot_state["scan_count"] % 30 == 0:
+                                logger.info(f"Overtrade limit: {trades_hr}/{max_hr} per hour, {trades_day}/{max_day} per day")
                 else:
                     # Gate 2: Cooldown check
                     cd_ok, cd_scans, cd_required = check_cooldown(config)
@@ -1533,6 +1771,9 @@ async def bot_scan_loop():
                                 "confidence_breakdown": conf_breakdown,
                                 "ml_win_probability": ml_win_prob,
                                 "ml_prediction": ml_prediction,
+                                "market_regime": adv_regime,
+                                "regime_strength": regime_strength,
+                                "session": active_session,
                             }
                             await db.positions.insert_one(position_doc)
                             logger.info(f"[{current_mode}] Opened {signal_side} {symbol} @ {entry_price:.8f}, Conf: {confidence:.3f}, R:R: {conf_breakdown['rr_ratio']}")
@@ -1586,6 +1827,7 @@ async def get_default_config():
         "max_slippage_percent": 0.1,
         "require_trend_alignment": True,
         "ml_min_win_probability": 0.55,
+        "allowed_sessions": ["ASIA", "LONDON", "NYC"],
         "telegram_token": "",
         "telegram_chat_id": ""
     }
@@ -2804,6 +3046,78 @@ async def seed_ml_data(user=Depends(get_current_user)):
         "total_labeled": after,
         "min_required": ML_MIN_SAMPLES,
         "can_train": after >= ML_MIN_SAMPLES
+    }
+
+# ====================================================================
+# PHASE 3: RISK & ANALYTICS API
+# ====================================================================
+
+@api_router.post("/risk/monte-carlo")
+async def api_monte_carlo(user=Depends(get_current_user)):
+    """Run Monte Carlo simulation on historical trade data."""
+    result = await run_monte_carlo(db, n_simulations=1000, n_trades_per_sim=100)
+    return result
+
+@api_router.get("/risk/circuit-breaker")
+async def api_circuit_breaker(user=Depends(get_current_user)):
+    """Get circuit breaker status."""
+    bal_doc = await db.bot_state.find_one({"key": "account_balance"})
+    current_balance = bal_doc["value"] if bal_doc else 10000.0
+    peak = _circuit_breaker["peak_balance"]
+    dd_pct = ((peak - current_balance) / peak * 100) if peak > 0 else 0
+    
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+    max_dd = config.get("max_total_drawdown_percent", 5.0) if config else 5.0
+    
+    return {
+        "tripped": _circuit_breaker["tripped"],
+        "tripped_at": _circuit_breaker["tripped_at"],
+        "drawdown_at_trip": _circuit_breaker["drawdown_at_trip"],
+        "current_drawdown": round(dd_pct, 2),
+        "peak_balance": round(peak, 2),
+        "current_balance": round(current_balance, 2),
+        "max_drawdown_threshold": max_dd,
+    }
+
+@api_router.post("/risk/circuit-breaker/reset")
+async def api_reset_circuit_breaker(user=Depends(get_current_user)):
+    """Manually reset the circuit breaker and unpause bot."""
+    reset_circuit_breaker()
+    bot_state["paused"] = False
+    return {"status": "reset", "bot_paused": False}
+
+@api_router.get("/risk/regime")
+async def api_market_regime(user=Depends(get_current_user)):
+    """Get current market regime for all symbols."""
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+    symbols = config.get("symbols", ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]) if config else ["BTCUSDT"]
+    
+    regimes = {}
+    for symbol in symbols:
+        candles = generate_candles(symbol, 60)
+        regime, strength, details = detect_market_regime_advanced(candles)
+        regimes[symbol] = {
+            "regime": regime,
+            "strength": strength,
+            "details": details,
+            "price": SYMBOL_PRICES.get(symbol, 0),
+        }
+    
+    return {"regimes": regimes, "session": check_trading_session(config or {})}
+
+@api_router.get("/risk/sessions")
+async def api_trading_sessions(user=Depends(get_current_user)):
+    """Get trading session info."""
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+    session_ok, active_session = check_trading_session(config or {})
+    now_utc = datetime.now(timezone.utc)
+    return {
+        "current_utc": now_utc.isoformat(),
+        "current_hour": now_utc.hour,
+        "in_session": session_ok,
+        "active_session": active_session,
+        "sessions": TRADING_SESSIONS,
+        "allowed": config.get("allowed_sessions", ["ASIA", "LONDON", "NYC"]) if config else ["ASIA", "LONDON", "NYC"],
     }
 
 # ====================================================================

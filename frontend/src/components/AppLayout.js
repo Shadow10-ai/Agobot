@@ -12,6 +12,7 @@ import {
   FlaskConical,
   GitCompareArrows,
   Brain,
+  ShieldAlert,
 } from "lucide-react";
 
 const navItems = [
@@ -21,6 +22,7 @@ const navItems = [
   { path: "/backtester", icon: FlaskConical, label: "Backtester" },
   { path: "/compare", icon: GitCompareArrows, label: "Compare" },
   { path: "/ml", icon: Brain, label: "ML Intelligence" },
+  { path: "/risk", icon: ShieldAlert, label: "Risk Management" },
   { path: "/config", icon: Settings, label: "Configuration" },
 ];
 
