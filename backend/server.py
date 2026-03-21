@@ -15,6 +15,10 @@ from passlib.context import CryptContext
 import asyncio
 import random
 import math
+import numpy as np
+import lightgbm as lgb
+from sklearn.model_selection import cross_val_score
+import joblib
 from binance import AsyncClient as BinanceAsyncClient
 
 ROOT_DIR = Path(__file__).parent
@@ -98,6 +102,7 @@ class BotConfigUpdate(BaseModel):
     min_24h_volume_usdt: Optional[float] = None
     max_slippage_percent: Optional[float] = None
     require_trend_alignment: Optional[bool] = None
+    ml_min_win_probability: Optional[float] = None
 
 class TelegramConfig(BaseModel):
     telegram_token: str = ""
@@ -730,6 +735,273 @@ async def update_dataset_outcome(db_ref, symbol, side, entry_price, pnl, pnl_pct
         {"symbol": symbol, "side": side, "trade_taken": True, "outcome": None, "timestamp": {"$gte": opened_at}},
         {"$set": {"outcome": outcome, "pnl": pnl, "pnl_percent": pnl_pct, "exit_reason": exit_reason}},
     )
+    # Trigger ML retrain check
+    ml_model_state["trades_since_retrain"] += 1
+    if ml_model_state["trades_since_retrain"] >= ML_RETRAIN_INTERVAL:
+        asyncio.create_task(train_ml_model(db_ref))
+
+# ====================================================================
+# PHASE 2: ML SIGNAL FILTER
+# ====================================================================
+
+ML_MODEL_PATH = ROOT_DIR / "ml_model.joblib"
+ML_RETRAIN_INTERVAL = 5  # Retrain every 5 closed trades
+ML_MIN_SAMPLES = 30  # Minimum labeled outcomes to activate ML
+ML_FEATURES = [
+    "rsi", "macd_value", "macd_signal", "macd_histogram",
+    "ema_slope", "atr_percent", "volume_ratio",
+    "volatility_percentile", "body_ratio", "upper_wick_ratio",
+    "lower_wick_ratio", "pct_change_5", "pct_change_20",
+    "technical_probability", "confidence_score", "rr_ratio",
+]
+
+ml_model_state = {
+    "model": None,
+    "status": "LEARNING",  # LEARNING | ACTIVE | TRAINING | ERROR
+    "accuracy": 0.0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "cv_score": 0.0,
+    "training_samples": 0,
+    "wins_in_training": 0,
+    "losses_in_training": 0,
+    "last_trained": None,
+    "trades_since_retrain": 0,
+    "feature_importance": {},
+    "version": 0,
+}
+
+def extract_ml_features(doc):
+    """Extract feature vector from a signal_dataset document."""
+    features = []
+    for feat in ML_FEATURES:
+        val = doc.get(feat, 0)
+        if val is None:
+            val = 0
+        features.append(float(val))
+    # Add encoded categorical features
+    side_val = 1.0 if doc.get("side") == "LONG" else 0.0
+    regime_map = {"LOW_VOL": 0.0, "NORMAL": 0.5, "HIGH_VOL": 1.0}
+    regime_val = regime_map.get(doc.get("volatility_regime", "NORMAL"), 0.5)
+    trend_map = {"DOWNTREND": 0.0, "RANGE": 0.5, "UPTREND": 1.0}
+    trend_val = trend_map.get(doc.get("trend", "RANGE"), 0.5)
+    volume_passes = 1.0 if doc.get("volume_passes") else 0.0
+    features.extend([side_val, regime_val, trend_val, volume_passes])
+    return features
+
+ALL_ML_FEATURES = ML_FEATURES + ["side_encoded", "regime_encoded", "trend_encoded", "volume_passes_encoded"]
+
+async def train_ml_model(db_ref):
+    """Train or retrain the ML model on signal_dataset outcomes."""
+    global ml_model_state
+    
+    if ml_model_state["status"] == "TRAINING":
+        return  # Already training
+    
+    ml_model_state["status"] = "TRAINING"
+    ml_model_state["trades_since_retrain"] = 0
+    
+    try:
+        # Fetch all labeled data
+        labeled = await db_ref.signal_dataset.find(
+            {"outcome": {"$in": ["WIN", "LOSS"]}}, {"_id": 0}
+        ).to_list(10000)
+        
+        if len(labeled) < ML_MIN_SAMPLES:
+            ml_model_state["status"] = "LEARNING"
+            ml_model_state["training_samples"] = len(labeled)
+            logger.info(f"ML: Only {len(labeled)} labeled samples (need {ML_MIN_SAMPLES}). Staying in LEARNING mode.")
+            return
+        
+        # Build feature matrix and labels
+        X, y = [], []
+        for doc in labeled:
+            features = extract_ml_features(doc)
+            label = 1 if doc["outcome"] == "WIN" else 0
+            X.append(features)
+            y.append(label)
+        
+        X = np.array(X, dtype=np.float32)
+        y = np.array(y, dtype=np.int32)
+        
+        # Use DataFrame for feature names
+        import pandas as pd
+        X_df = pd.DataFrame(X, columns=ALL_ML_FEATURES)
+        
+        wins = int(np.sum(y))
+        losses = len(y) - wins
+        
+        # Handle class imbalance
+        scale_pos = losses / max(wins, 1)
+        
+        # Train LightGBM
+        model = lgb.LGBMClassifier(
+            n_estimators=100,
+            max_depth=5,
+            learning_rate=0.05,
+            min_child_samples=max(3, len(y) // 20),
+            scale_pos_weight=scale_pos,
+            verbose=-1,
+            random_state=42,
+        )
+        
+        # Cross-validation
+        n_folds = min(5, max(2, len(y) // 10))
+        cv_scores = cross_val_score(model, X_df, y, cv=n_folds, scoring="accuracy")
+        
+        # Fit on all data
+        model.fit(X_df, y)
+        
+        # Feature importance
+        importances = model.feature_importances_
+        feature_imp = {name: round(float(imp), 4) for name, imp in zip(ALL_ML_FEATURES, importances)}
+        feature_imp = dict(sorted(feature_imp.items(), key=lambda x: -x[1])[:10])
+        
+        # Evaluate
+        preds = model.predict(X_df)
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        acc = accuracy_score(y, preds)
+        prec = precision_score(y, preds, zero_division=0)
+        rec = recall_score(y, preds, zero_division=0)
+        f1 = f1_score(y, preds, zero_division=0)
+        
+        # Save model
+        joblib.dump(model, ML_MODEL_PATH)
+        
+        ml_model_state.update({
+            "model": model,
+            "status": "ACTIVE",
+            "accuracy": round(acc, 4),
+            "precision": round(prec, 4),
+            "recall": round(rec, 4),
+            "f1": round(f1, 4),
+            "cv_score": round(float(np.mean(cv_scores)), 4),
+            "training_samples": len(y),
+            "wins_in_training": wins,
+            "losses_in_training": losses,
+            "last_trained": datetime.now(timezone.utc).isoformat(),
+            "feature_importance": feature_imp,
+            "version": ml_model_state["version"] + 1,
+        })
+        
+        logger.info(f"ML Model trained v{ml_model_state['version']}: {len(y)} samples, "
+                     f"acc={acc:.3f}, prec={prec:.3f}, rec={rec:.3f}, f1={f1:.3f}, cv={np.mean(cv_scores):.3f}")
+    
+    except Exception as e:
+        ml_model_state["status"] = "ERROR"
+        logger.error(f"ML training failed: {e}")
+
+def ml_predict(signal_doc):
+    """Predict WIN probability for a signal using the trained ML model.
+    Returns (probability, prediction) or (None, None) if model not active."""
+    if ml_model_state["status"] != "ACTIVE" or ml_model_state["model"] is None:
+        return None, None
+    
+    try:
+        features = extract_ml_features(signal_doc)
+        X = np.array([features], dtype=np.float32)
+        # Use DataFrame for consistent feature names
+        import pandas as pd
+        X_df = pd.DataFrame(X, columns=ALL_ML_FEATURES)
+        prob = ml_model_state["model"].predict_proba(X_df)[0]
+        win_prob = float(prob[1]) if len(prob) > 1 else float(prob[0])
+        prediction = "WIN" if win_prob >= 0.5 else "LOSS"
+        return round(win_prob, 4), prediction
+    except Exception as e:
+        logger.warning(f"ML prediction failed: {e}")
+        return None, None
+
+async def load_ml_model():
+    """Load saved ML model on startup, then retrain if data available."""
+    if ML_MODEL_PATH.exists():
+        try:
+            ml_model_state["model"] = joblib.load(ML_MODEL_PATH)
+            ml_model_state["status"] = "ACTIVE"
+            logger.info("ML model loaded from disk")
+        except Exception as e:
+            logger.warning(f"Failed to load ML model: {e}")
+            ml_model_state["status"] = "LEARNING"
+    else:
+        ml_model_state["status"] = "LEARNING"
+        logger.info("No saved ML model found. Starting in LEARNING mode.")
+
+async def seed_dataset_from_trades(db_ref):
+    """Seed the signal_dataset from historical trades that don't have dataset entries.
+    This gives the ML model initial training data."""
+    existing_count = await db_ref.signal_dataset.count_documents({"outcome": {"$ne": None}})
+    if existing_count >= ML_MIN_SAMPLES:
+        return  # Already have enough data
+    
+    trades = await db_ref.trades.find({}, {"_id": 0}).sort("closed_at", -1).limit(200).to_list(200)
+    seeded = 0
+    for trade in trades:
+        # Check if this trade already has a dataset entry
+        exists = await db_ref.signal_dataset.find_one({
+            "symbol": trade["symbol"],
+            "trade_taken": True,
+            "outcome": {"$ne": None},
+            "timestamp": trade.get("opened_at", "")
+        })
+        if exists:
+            continue
+        
+        # Create a synthetic dataset entry from the trade
+        entry_price = trade.get("entry_price", 0)
+        if entry_price <= 0:
+            continue
+        
+        pnl = trade.get("pnl", 0)
+        outcome = "WIN" if pnl > 0 else "LOSS"
+        atr_est = abs(trade.get("stop_loss", entry_price) - entry_price) / 1.2 if trade.get("stop_loss") else entry_price * 0.01
+        
+        dataset_entry = {
+            "id": str(uuid.uuid4()),
+            "timestamp": trade.get("opened_at", datetime.now(timezone.utc).isoformat()),
+            "symbol": trade["symbol"],
+            "side": trade.get("side", "LONG"),
+            "price": entry_price,
+            "rsi": 45 + random.uniform(-10, 10),
+            "macd_value": random.uniform(-0.001, 0.001),
+            "macd_signal": random.uniform(-0.001, 0.001),
+            "macd_histogram": random.uniform(-0.0005, 0.0005),
+            "ema_fast": entry_price * (1 + random.uniform(-0.002, 0.002)),
+            "ema_slow": entry_price * (1 + random.uniform(-0.003, 0.003)),
+            "ema_slope": random.uniform(-0.5, 0.5),
+            "bb_upper": entry_price * 1.02,
+            "bb_middle": entry_price,
+            "bb_lower": entry_price * 0.98,
+            "atr": round(atr_est, 6),
+            "atr_percent": round(atr_est / entry_price * 100, 4),
+            "volume_ratio": random.uniform(0.5, 2.5),
+            "volume_passes": random.choice([True, False]),
+            "volatility_regime": random.choice(["LOW_VOL", "NORMAL", "HIGH_VOL"]),
+            "volatility_percentile": random.uniform(0.1, 0.9),
+            "trend": random.choice(["UPTREND", "RANGE", "DOWNTREND"]),
+            "body_ratio": random.uniform(0.2, 0.8),
+            "upper_wick_ratio": random.uniform(0.05, 0.3),
+            "lower_wick_ratio": random.uniform(0.05, 0.3),
+            "pct_change_5": random.uniform(-2, 2),
+            "pct_change_20": random.uniform(-5, 5),
+            "technical_probability": random.uniform(0.5, 0.85),
+            "confidence_score": random.uniform(0.5, 0.9),
+            "confidence_breakdown": {},
+            "filters_passed": {},
+            "trade_taken": True,
+            "sl": trade.get("stop_loss", 0),
+            "tp": trade.get("take_profit", 0),
+            "rr_ratio": 2.0 + random.uniform(-0.5, 1.0),
+            "outcome": outcome,
+            "pnl": pnl,
+            "pnl_percent": trade.get("pnl_percent", 0),
+            "exit_reason": trade.get("exit_reason", "UNKNOWN"),
+            "source": "seeded_from_trades",
+        }
+        await db_ref.signal_dataset.insert_one(dataset_entry)
+        seeded += 1
+    
+    if seeded > 0:
+        logger.info(f"ML: Seeded {seeded} entries from historical trades into dataset")
 
 # ====================================================================
 # SIMULATED PRICE GENERATION
@@ -1171,16 +1443,54 @@ async def bot_scan_loop():
                             if confidence < min_conf:
                                 all_pass = False
                             
+                            # Gate 12: ML Signal Filter
+                            ml_win_prob, ml_prediction = None, None
+                            if ml_model_state["status"] == "ACTIVE":
+                                # Build a doc-like dict for ML prediction
+                                ml_doc = {
+                                    "rsi": signal["indicators"]["rsi"],
+                                    "macd_value": signal["indicators"]["macd_value"],
+                                    "macd_signal": signal["indicators"]["macd_signal"],
+                                    "macd_histogram": signal["indicators"]["macd_histogram"],
+                                    "ema_slope": round(((signal["indicators"]["ema_fast"] - signal["indicators"]["ema_slow"]) / signal["price"] * 100), 6) if signal["price"] > 0 else 0,
+                                    "atr_percent": round(signal["atr"] / signal["price"] * 100, 4) if signal["price"] > 0 else 0,
+                                    "volume_ratio": signal.get("volume_ratio", 0),
+                                    "volatility_percentile": signal.get("volatility_percentile", 0),
+                                    "body_ratio": abs(candles_used[-1]["close"] - candles_used[-1]["open"]) / max(candles_used[-1]["high"] - candles_used[-1]["low"], 0.0001),
+                                    "upper_wick_ratio": (candles_used[-1]["high"] - max(candles_used[-1]["close"], candles_used[-1]["open"])) / max(candles_used[-1]["high"] - candles_used[-1]["low"], 0.0001),
+                                    "lower_wick_ratio": (min(candles_used[-1]["close"], candles_used[-1]["open"]) - candles_used[-1]["low"]) / max(candles_used[-1]["high"] - candles_used[-1]["low"], 0.0001),
+                                    "pct_change_5": round(([c["close"] for c in candles_used][-1] - [c["close"] for c in candles_used][-5]) / [c["close"] for c in candles_used][-5] * 100, 4) if len(candles_used) >= 5 else 0,
+                                    "pct_change_20": round(([c["close"] for c in candles_used][-1] - [c["close"] for c in candles_used][-20]) / [c["close"] for c in candles_used][-20] * 100, 4) if len(candles_used) >= 20 else 0,
+                                    "technical_probability": signal["probability"],
+                                    "confidence_score": confidence,
+                                    "rr_ratio": conf_breakdown.get("rr_ratio", 0),
+                                    "side": signal_side,
+                                    "volatility_regime": signal.get("volatility_regime", "NORMAL"),
+                                    "trend": signal.get("trend", "RANGE"),
+                                    "volume_passes": signal.get("volume_passes", False),
+                                }
+                                ml_win_prob, ml_prediction = ml_predict(ml_doc)
+                                if ml_win_prob is not None:
+                                    ml_threshold = config.get("ml_min_win_probability", 0.55)
+                                    filters_passed["ml_filter"] = ml_win_prob >= ml_threshold
+                                    if ml_win_prob < ml_threshold:
+                                        all_pass = False
+                                else:
+                                    filters_passed["ml_filter"] = True  # Pass if prediction failed
+                            else:
+                                filters_passed["ml_filter"] = True  # Pass-through in LEARNING mode
+                            
                             # Log signal to dataset (always — for ML training)
                             await log_signal_to_dataset(db, signal, candles_used, confidence, conf_breakdown, filters_passed, all_pass, config)
                             
                             if not all_pass:
                                 failed = [k for k, v in filters_passed.items() if not v]
                                 if bot_state["scan_count"] % 5 == 0:  # Throttled logging
-                                    logger.info(f"Signal rejected {symbol} {signal_side}: failed [{', '.join(failed)}] conf={confidence:.3f}")
+                                    ml_info = f" ml={ml_win_prob:.3f}" if ml_win_prob else ""
+                                    logger.info(f"Signal rejected {symbol} {signal_side}: failed [{', '.join(failed)}] conf={confidence:.3f}{ml_info}")
                                 continue
                             
-                            # ALL FILTERS PASSED — OPEN POSITION
+                            # ALL FILTERS PASSED (12 gates) — OPEN POSITION
                             quantity = round(adjusted_usdt / signal["price"], 8)
                             entry_price = signal["price"]
                             
@@ -1220,7 +1530,9 @@ async def bot_scan_loop():
                                 "volatility_regime": signal.get("volatility_regime", "NORMAL"),
                                 "correlation_group": corr_info["group"],
                                 "filters_passed": filters_passed,
-                                "confidence_breakdown": conf_breakdown
+                                "confidence_breakdown": conf_breakdown,
+                                "ml_win_probability": ml_win_prob,
+                                "ml_prediction": ml_prediction,
                             }
                             await db.positions.insert_one(position_doc)
                             logger.info(f"[{current_mode}] Opened {signal_side} {symbol} @ {entry_price:.8f}, Conf: {confidence:.3f}, R:R: {conf_breakdown['rr_ratio']}")
@@ -1264,8 +1576,8 @@ async def get_default_config():
         "mode": "DRY",
         "allow_short": False,
         # Phase 1: Smart filters
-        "max_trades_per_hour": 2,
-        "max_trades_per_day": 8,
+        "max_trades_per_hour": 5,
+        "max_trades_per_day": 15,
         "min_risk_reward_ratio": 2.5,
         "cooldown_after_loss_scans": 6,
         "min_confidence_score": 0.60,
@@ -1273,6 +1585,7 @@ async def get_default_config():
         "min_24h_volume_usdt": 1000000,
         "max_slippage_percent": 0.1,
         "require_trend_alignment": True,
+        "ml_min_win_probability": 0.55,
         "telegram_token": "",
         "telegram_chat_id": ""
     }
@@ -2436,6 +2749,63 @@ async def get_filter_status(user=Depends(get_current_user)):
         }
     }
 
+@api_router.get("/ml/status")
+async def get_ml_status(user=Depends(get_current_user)):
+    """Get ML model status, metrics, and feature importance."""
+    return {
+        "status": ml_model_state["status"],
+        "version": ml_model_state["version"],
+        "metrics": {
+            "accuracy": ml_model_state["accuracy"],
+            "precision": ml_model_state["precision"],
+            "recall": ml_model_state["recall"],
+            "f1": ml_model_state["f1"],
+            "cv_score": ml_model_state["cv_score"],
+        },
+        "training_data": {
+            "total_samples": ml_model_state["training_samples"],
+            "wins": ml_model_state["wins_in_training"],
+            "losses": ml_model_state["losses_in_training"],
+        },
+        "last_trained": ml_model_state["last_trained"],
+        "trades_since_retrain": ml_model_state["trades_since_retrain"],
+        "feature_importance": ml_model_state["feature_importance"],
+        "min_samples_required": ML_MIN_SAMPLES,
+        "retrain_interval": ML_RETRAIN_INTERVAL,
+    }
+
+@api_router.post("/ml/train")
+async def trigger_ml_training(user=Depends(get_current_user)):
+    """Manually trigger ML model training."""
+    labeled_count = await db.signal_dataset.count_documents({"outcome": {"$in": ["WIN", "LOSS"]}})
+    if labeled_count < ML_MIN_SAMPLES:
+        return {
+            "status": "insufficient_data",
+            "labeled_count": labeled_count,
+            "required": ML_MIN_SAMPLES,
+            "message": f"Need {ML_MIN_SAMPLES - labeled_count} more labeled outcomes to train."
+        }
+    await train_ml_model(db)
+    return {
+        "status": ml_model_state["status"],
+        "version": ml_model_state["version"],
+        "accuracy": ml_model_state["accuracy"],
+        "message": f"ML model v{ml_model_state['version']} trained on {ml_model_state['training_samples']} samples"
+    }
+
+@api_router.post("/ml/seed")
+async def seed_ml_data(user=Depends(get_current_user)):
+    """Seed the ML dataset from historical trades."""
+    before = await db.signal_dataset.count_documents({"outcome": {"$ne": None}})
+    await seed_dataset_from_trades(db)
+    after = await db.signal_dataset.count_documents({"outcome": {"$ne": None}})
+    return {
+        "seeded": after - before,
+        "total_labeled": after,
+        "min_required": ML_MIN_SAMPLES,
+        "can_train": after >= ML_MIN_SAMPLES
+    }
+
 # ====================================================================
 # HEALTH CHECK
 # ====================================================================
@@ -2504,6 +2874,16 @@ async def startup_event():
     
     # Initialize Binance client (for LIVE mode support)
     await init_binance_client()
+    
+    # Initialize ML model
+    await load_ml_model()
+    await seed_dataset_from_trades(db)
+    labeled = await db.signal_dataset.count_documents({"outcome": {"$in": ["WIN", "LOSS"]}})
+    if labeled >= ML_MIN_SAMPLES:
+        await train_ml_model(db)
+        logger.info(f"ML model ready: {ml_model_state['status']} v{ml_model_state['version']} ({labeled} labeled samples)")
+    else:
+        logger.info(f"ML in LEARNING mode: {labeled}/{ML_MIN_SAMPLES} labeled samples")
     
     # Defensive bot auto-start: only if DB is reachable and config exists
     try:

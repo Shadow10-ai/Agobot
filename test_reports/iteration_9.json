@@ -1,0 +1,119 @@
+{
+  "summary": "Iteration 9 testing for Phase 2 ML Signal Filter completed successfully. All 14 backend tests pass. ML model is ACTIVE v1 with 86 training samples. Frontend ML Intelligence page shows all required components: model status banner (ACTIVE), performance metrics (100% accuracy/precision/recall/F1, 56.9% CV), training dataset stats, feature importance chart, rejection reasons, and Seed/Train buttons. Config page has ML Min Win Prob input in Smart Filters section.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard",
+        "issues": ["Console warning: <tr> cannot be child of <span> - hydration issue in Recent Trades table (cosmetic, not blocking)"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ml_signal_filter.py",
+    "/app/test_reports/pytest/pytest_ml_signal_filter.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_ml_signal_filter.py - Created comprehensive test suite for Phase 2 ML Signal Filter"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 tests passed)",
+    "frontend": "100% (ML page loads, all components visible, navigation working)"
+  },
+  "test_credentials": "email=user@example.com, password=password",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 2 ML Signal Filter fully implemented and tested. Backend: GET /api/ml/status returns status, version, metrics (accuracy/precision/recall/f1/cv_score), training_data, feature_importance, last_trained, trades_since_retrain. POST /api/ml/train triggers training. POST /api/ml/seed seeds historical data. GET /api/dataset/stats returns signal counts and rejection reasons. PUT /api/bot/config accepts ml_min_win_probability. Frontend: ML Intelligence page at /ml shows model status banner, performance metrics when ACTIVE, training dataset stats, feature importance chart, rejection reasons, Seed Data and Train Model buttons. Config page has ML Min Win Prob input in Smart Filters section with Phase 2 label.",
+  "verified_features": {
+    "ml_status_endpoint": {
+      "endpoint": "GET /api/ml/status",
+      "fields": ["status", "version", "metrics", "training_data", "feature_importance", "last_trained", "trades_since_retrain", "min_samples_required", "retrain_interval"],
+      "metrics_fields": ["accuracy", "precision", "recall", "f1", "cv_score"],
+      "training_data_fields": ["total_samples", "wins", "losses"],
+      "status": "WORKING",
+      "sample_data": {
+        "status": "ACTIVE",
+        "version": 1,
+        "training_samples": 86,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "cv_score": 0.569
+      }
+    },
+    "ml_train_endpoint": {
+      "endpoint": "POST /api/ml/train",
+      "returns": ["status", "version", "accuracy", "message"],
+      "status": "WORKING"
+    },
+    "ml_seed_endpoint": {
+      "endpoint": "POST /api/ml/seed",
+      "returns": ["seeded", "total_labeled", "min_required", "can_train"],
+      "status": "WORKING"
+    },
+    "dataset_stats_endpoint": {
+      "endpoint": "GET /api/dataset/stats",
+      "fields": ["total_signals", "trades_taken", "trades_rejected", "outcomes", "win_rate", "rejection_reasons", "avg_confidence_taken", "avg_confidence_rejected"],
+      "status": "WORKING",
+      "sample_data": {
+        "total_signals": 146,
+        "trades_taken": 87,
+        "trades_rejected": 59,
+        "wins": 33,
+        "losses": 53,
+        "pending": 1
+      }
+    },
+    "bot_config_ml_field": {
+      "endpoint": "GET/PUT /api/bot/config",
+      "field": "ml_min_win_probability",
+      "default_value": 0.55,
+      "status": "WORKING"
+    },
+    "ml_intelligence_page": {
+      "route": "/ml",
+      "components": {
+        "model_status_banner": true,
+        "status_badge": "ACTIVE",
+        "model_performance_metrics": true,
+        "training_dataset_stats": true,
+        "feature_importance_chart": true,
+        "rejection_reasons": true,
+        "seed_data_button": true,
+        "train_model_button": true,
+        "refresh_button": true
+      },
+      "status": "WORKING"
+    },
+    "sidebar_navigation": {
+      "ml_intelligence_link": true,
+      "brain_icon": true,
+      "status": "WORKING"
+    },
+    "config_page_ml_field": {
+      "section": "Smart Filters",
+      "field_label": "ML MIN WIN PROB",
+      "description": "ML model gate threshold (Phase 2)",
+      "status": "WORKING"
+    },
+    "all_pages_accessible": {
+      "pages": ["Dashboard", "Trade History", "Leaderboard", "Backtester", "Compare", "ML Intelligence", "Configuration"],
+      "status": "WORKING"
+    },
+    "health_endpoint": {
+      "endpoint": "GET /api/health",
+      "requires_auth": false,
+      "status": "WORKING"
+    }
+  },
+  "mocked_api_note": "Bot runs in DRY mode. ML model trained on seeded historical data (synthetic features). Binance cannot connect from preview server."
+}

@@ -83,6 +83,7 @@ export default function ConfigPage({ user, onLogout }) {
         min_24h_volume_usdt: config.min_24h_volume_usdt,
         max_slippage_percent: config.max_slippage_percent,
         require_trend_alignment: config.require_trend_alignment,
+        ml_min_win_probability: config.ml_min_win_probability,
       };
       await api.put("/bot/config", payload);
       toast.success("Configuration saved");
@@ -541,6 +542,7 @@ export default function ConfigPage({ user, onLogout }) {
             <InputField label="Max Spread (%)" name="spread_max_percent" value={config?.spread_max_percent || 0.15} onChange={handleChange} step={0.01} min={0.01} max={1} description="Reject trades with high spread" />
             <InputField label="Min 24h Volume (USDT)" name="min_24h_volume_usdt" value={config?.min_24h_volume_usdt || 1000000} onChange={handleChange} step={100000} min={0} description="Minimum liquidity requirement" />
             <InputField label="Max Slippage (%)" name="max_slippage_percent" value={config?.max_slippage_percent || 0.1} onChange={handleChange} step={0.01} min={0.01} max={1} description="Reject if estimated slippage too high" />
+            <InputField label="ML Min Win Prob" name="ml_min_win_probability" value={config?.ml_min_win_probability || 0.55} onChange={handleChange} step={0.05} min={0.3} max={0.95} description="ML model gate threshold (Phase 2)" />
             <div className="flex items-center justify-between bg-[#0A0A0A] border border-[#27272A] rounded-sm px-3 py-2.5">
               <div>
                 <label className="overline block text-[10px]">Trend Alignment</label>

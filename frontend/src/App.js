@@ -8,6 +8,7 @@ import ConfigPage from "@/pages/ConfigPage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import BacktesterPage from "@/pages/BacktesterPage";
 import ComparePage from "@/pages/ComparePage";
+import MLPage from "@/pages/MLPage";
 import { Toaster } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -119,6 +120,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <ConfigPage user={user} onLogout={handleLogout} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ml"
+            element={
+              <ProtectedRoute>
+                <MLPage user={user} onLogout={handleLogout} />
               </ProtectedRoute>
             }
           />

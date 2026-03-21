@@ -11,6 +11,7 @@ import {
   Trophy,
   FlaskConical,
   GitCompareArrows,
+  Brain,
 } from "lucide-react";
 
 const navItems = [
@@ -19,6 +20,7 @@ const navItems = [
   { path: "/leaderboard", icon: Trophy, label: "Leaderboard" },
   { path: "/backtester", icon: FlaskConical, label: "Backtester" },
   { path: "/compare", icon: GitCompareArrows, label: "Compare" },
+  { path: "/ml", icon: Brain, label: "ML Intelligence" },
   { path: "/config", icon: Settings, label: "Configuration" },
 ];
 
