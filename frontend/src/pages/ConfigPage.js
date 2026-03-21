@@ -74,6 +74,15 @@ export default function ConfigPage({ user, onLogout }) {
         trailing_stop_activate_pips: config.trailing_stop_activate_pips,
         trailing_stop_distance_pips: config.trailing_stop_distance_pips,
         allow_short: config.allow_short,
+        max_trades_per_hour: config.max_trades_per_hour,
+        max_trades_per_day: config.max_trades_per_day,
+        min_risk_reward_ratio: config.min_risk_reward_ratio,
+        cooldown_after_loss_scans: config.cooldown_after_loss_scans,
+        min_confidence_score: config.min_confidence_score,
+        spread_max_percent: config.spread_max_percent,
+        min_24h_volume_usdt: config.min_24h_volume_usdt,
+        max_slippage_percent: config.max_slippage_percent,
+        require_trend_alignment: config.require_trend_alignment,
       };
       await api.put("/bot/config", payload);
       toast.success("Configuration saved");
@@ -511,6 +520,38 @@ export default function ConfigPage({ user, onLogout }) {
               >
                 <Check className="w-3 h-3" />
                 {savingTg ? "Saving..." : "Save Telegram Settings"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Smart Filters Section */}
+        <div className="bg-[#121212] border border-white/5 rounded-lg p-6" data-testid="smart-filters-config">
+          <div className="flex items-center gap-2 mb-5">
+            <Shield className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-sm font-semibold">Smart Filters</h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-medium">Phase 1</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <InputField label="Max Trades / Hour" name="max_trades_per_hour" value={config?.max_trades_per_hour || 2} onChange={handleChange} step={1} min={1} max={20} description="Prevent overtrading per hour" />
+            <InputField label="Max Trades / Day" name="max_trades_per_day" value={config?.max_trades_per_day || 8} onChange={handleChange} step={1} min={1} max={50} description="Daily trade cap" />
+            <InputField label="Min Risk:Reward" name="min_risk_reward_ratio" value={config?.min_risk_reward_ratio || 2.5} onChange={handleChange} step={0.1} min={1} max={10} description="Minimum R:R ratio to enter" />
+            <InputField label="Loss Cooldown (scans)" name="cooldown_after_loss_scans" value={config?.cooldown_after_loss_scans || 6} onChange={handleChange} step={1} min={0} max={100} description="Wait N scans after a loss" />
+            <InputField label="Min Confidence Score" name="min_confidence_score" value={config?.min_confidence_score || 0.6} onChange={handleChange} step={0.05} min={0.1} max={1} description="Composite score threshold (0-1)" />
+            <InputField label="Max Spread (%)" name="spread_max_percent" value={config?.spread_max_percent || 0.15} onChange={handleChange} step={0.01} min={0.01} max={1} description="Reject trades with high spread" />
+            <InputField label="Min 24h Volume (USDT)" name="min_24h_volume_usdt" value={config?.min_24h_volume_usdt || 1000000} onChange={handleChange} step={100000} min={0} description="Minimum liquidity requirement" />
+            <InputField label="Max Slippage (%)" name="max_slippage_percent" value={config?.max_slippage_percent || 0.1} onChange={handleChange} step={0.01} min={0.01} max={1} description="Reject if estimated slippage too high" />
+            <div className="flex items-center justify-between bg-[#0A0A0A] border border-[#27272A] rounded-sm px-3 py-2.5">
+              <div>
+                <label className="overline block text-[10px]">Trend Alignment</label>
+                <p className="text-[10px] text-zinc-600 mt-0.5">Require multi-TF trend match</p>
+              </div>
+              <button
+                data-testid="trend-alignment-toggle"
+                onClick={() => handleChange("require_trend_alignment", !config?.require_trend_alignment)}
+                className={`relative w-10 h-5 rounded-full transition-colors ${config?.require_trend_alignment ? "bg-cyan-500" : "bg-zinc-700"}`}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${config?.require_trend_alignment ? "translate-x-5" : "translate-x-0.5"}`} />
               </button>
             </div>
           </div>

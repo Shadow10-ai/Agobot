@@ -88,6 +88,16 @@ class BotConfigUpdate(BaseModel):
     trailing_stop_activate_pips: Optional[float] = None
     trailing_stop_distance_pips: Optional[float] = None
     allow_short: Optional[bool] = None
+    # Phase 1 smart filters
+    max_trades_per_hour: Optional[int] = None
+    max_trades_per_day: Optional[int] = None
+    min_risk_reward_ratio: Optional[float] = None
+    cooldown_after_loss_scans: Optional[int] = None
+    min_confidence_score: Optional[float] = None
+    spread_max_percent: Optional[float] = None
+    min_24h_volume_usdt: Optional[float] = None
+    max_slippage_percent: Optional[float] = None
+    require_trend_alignment: Optional[bool] = None
 
 class TelegramConfig(BaseModel):
     telegram_token: str = ""
@@ -466,6 +476,262 @@ def structure_stop_loss(candles, side='LONG', atr=None, buffer_atr_mult=0.3):
     return max(sl, 0)
 
 # ====================================================================
+# PHASE 1: SMART FILTERS & DATASET BUILDER
+# ====================================================================
+
+# Cooldown state — tracks scans since last loss
+_cooldown_state = {"scans_since_loss": 999, "consecutive_losses": 0}
+
+def check_spread(candles, max_spread_pct=0.15):
+    """Check if the bid-ask spread is acceptable. 
+    In DRY mode, estimate from candle high-low range."""
+    if not candles or len(candles) < 2:
+        return True, 0.0
+    last = candles[-1]
+    # Estimate spread as a fraction of the candle range vs price
+    candle_range = last['high'] - last['low']
+    mid = (last['high'] + last['low']) / 2
+    estimated_spread_pct = (candle_range / mid * 100) * 0.1 if mid > 0 else 0
+    return estimated_spread_pct <= max_spread_pct, round(estimated_spread_pct, 4)
+
+def estimate_slippage(candles, trade_usdt, max_slippage_pct=0.1):
+    """Estimate slippage based on recent volume. Higher trade size relative 
+    to volume = more slippage."""
+    if not candles or len(candles) < 5:
+        return True, 0.0
+    recent_vols = [c['volume'] for c in candles[-5:]]
+    avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else 1
+    price = candles[-1]['close']
+    avg_vol_usdt = avg_vol * price
+    if avg_vol_usdt <= 0:
+        return False, 999.0
+    # Slippage estimate: trade size / average volume * impact factor
+    impact = (trade_usdt / avg_vol_usdt) * 100 * 2  # 2x multiplier for conservative est
+    return impact <= max_slippage_pct, round(impact, 4)
+
+def check_min_liquidity(candles, min_volume_usdt=1_000_000):
+    """Check if 24h volume (approximated from recent candles) meets minimum."""
+    if not candles or len(candles) < 10:
+        return True, 0
+    # Approximate 24h volume from recent candle data
+    price = candles[-1]['close']
+    total_vol = sum(c['volume'] for c in candles[-20:])  # ~1h of 3m candles
+    estimated_24h = total_vol * 24 * price  # rough extrapolation
+    return estimated_24h >= min_volume_usdt, round(estimated_24h, 0)
+
+def check_cooldown(config):
+    """Check if we're in a cooldown period after consecutive losses."""
+    required = config.get("cooldown_after_loss_scans", 6)
+    if _cooldown_state["scans_since_loss"] < required:
+        return False, _cooldown_state["scans_since_loss"], required
+    return True, _cooldown_state["scans_since_loss"], required
+
+def update_cooldown(is_loss):
+    """Update cooldown state after a trade closes."""
+    if is_loss:
+        _cooldown_state["scans_since_loss"] = 0
+        _cooldown_state["consecutive_losses"] += 1
+    else:
+        _cooldown_state["consecutive_losses"] = 0
+
+def increment_cooldown():
+    """Called each scan to count up from last loss."""
+    _cooldown_state["scans_since_loss"] += 1
+
+def multi_timeframe_trend(candles, side):
+    """Check if trade direction aligns with higher timeframe trend.
+    Uses the full candle dataset to simulate higher TF analysis."""
+    if not candles or len(candles) < 30:
+        return True, "INSUFFICIENT_DATA"
+    
+    # Short-term trend (last 10 candles ~30min)
+    short_closes = [c['close'] for c in candles[-10:]]
+    short_ema = ema(short_closes, 5) or short_closes[-1]
+    
+    # Medium-term trend (last 30 candles ~1.5h)
+    med_closes = [c['close'] for c in candles[-30:]]
+    med_ema = ema(med_closes, 13) or med_closes[-1]
+    
+    # Long-term trend (all candles ~3h)
+    long_ema = ema([c['close'] for c in candles], 26) or candles[-1]['close']
+    
+    # Determine trend: all EMAs aligned
+    if short_ema > med_ema > long_ema:
+        htf_trend = "BULLISH"
+    elif short_ema < med_ema < long_ema:
+        htf_trend = "BEARISH"
+    else:
+        htf_trend = "MIXED"
+    
+    if side == "LONG":
+        aligned = htf_trend in ("BULLISH", "MIXED")
+    else:  # SHORT
+        aligned = htf_trend in ("BEARISH", "MIXED")
+    
+    return aligned, htf_trend
+
+def check_risk_reward(entry, sl, tp, side, min_rr=2.5):
+    """Enforce minimum risk/reward ratio."""
+    if side == "LONG":
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+    else:
+        risk = abs(sl - entry)
+        reward = abs(entry - tp)
+    
+    if risk <= 0:
+        return False, 0.0
+    rr_ratio = reward / risk
+    return rr_ratio >= min_rr, round(rr_ratio, 2)
+
+async def check_overtrade_limits(db_ref, config):
+    """Check if we've exceeded max trades per hour or per day."""
+    max_per_hour = config.get("max_trades_per_hour", 2)
+    max_per_day = config.get("max_trades_per_day", 8)
+    
+    now = datetime.now(timezone.utc)
+    hour_ago = (now - timedelta(hours=1)).isoformat()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    
+    trades_last_hour = await db_ref.trades.count_documents({"closed_at": {"$gte": hour_ago}})
+    trades_today = await db_ref.trades.count_documents({"closed_at": {"$gte": day_start}})
+    
+    hour_ok = trades_last_hour < max_per_hour
+    day_ok = trades_today < max_per_day
+    
+    return hour_ok and day_ok, trades_last_hour, max_per_hour, trades_today, max_per_day
+
+def calculate_confidence_score(signal, candles, config):
+    """Composite confidence score combining technical probability, 
+    volume quality, regime favorability, and trend alignment."""
+    tech_prob = signal["probability"]
+    
+    # Volume quality (0-1)
+    vol_score = min(1.0, signal.get("volume_ratio", 0.5) / 2.0) if signal.get("volume_passes") else 0.2
+    
+    # Regime score
+    regime = signal.get("volatility_regime", "NORMAL")
+    regime_score = {"LOW_VOL": 0.6, "NORMAL": 0.85, "HIGH_VOL": 0.4}.get(regime, 0.5)
+    
+    # Trend alignment score
+    side = signal.get("side", "LONG")
+    aligned, htf = multi_timeframe_trend(candles, side)
+    trend_score = 1.0 if aligned and htf != "MIXED" else (0.7 if aligned else 0.3)
+    
+    # R:R score
+    entry, sl, tp = signal["price"], signal["sl"], signal["tp"]
+    if side == "LONG":
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+    else:
+        risk = abs(sl - entry)
+        reward = abs(entry - tp)
+    rr = reward / risk if risk > 0 else 0
+    rr_score = min(1.0, rr / 3.0)
+    
+    # Weighted composite
+    confidence = (
+        tech_prob * 0.30 +
+        vol_score * 0.15 +
+        regime_score * 0.15 +
+        trend_score * 0.25 +
+        rr_score * 0.15
+    )
+    
+    return round(confidence, 4), {
+        "technical": round(tech_prob, 4),
+        "volume": round(vol_score, 4),
+        "regime": round(regime_score, 4),
+        "trend_alignment": round(trend_score, 4),
+        "risk_reward": round(rr_score, 4),
+        "htf_trend": htf,
+        "rr_ratio": round(rr, 2)
+    }
+
+async def log_signal_to_dataset(db_ref, signal, candles, confidence, confidence_breakdown, filters_passed, trade_taken, config):
+    """Log every signal (taken or rejected) with full features for ML training."""
+    if not candles or len(candles) < 20:
+        return
+    
+    last_candle = candles[-1]
+    closes = [c['close'] for c in candles]
+    price = closes[-1]
+    
+    # Candle structure features
+    body = abs(last_candle['close'] - last_candle['open'])
+    upper_wick = last_candle['high'] - max(last_candle['close'], last_candle['open'])
+    lower_wick = min(last_candle['close'], last_candle['open']) - last_candle['low']
+    candle_range = last_candle['high'] - last_candle['low']
+    body_ratio = body / candle_range if candle_range > 0 else 0
+    
+    # Price change features
+    pct_change_5 = (closes[-1] - closes[-5]) / closes[-5] * 100 if len(closes) >= 5 else 0
+    pct_change_20 = (closes[-1] - closes[-20]) / closes[-20] * 100 if len(closes) >= 20 else 0
+    
+    # EMA slope
+    ema5 = ema(closes, 5)
+    ema13 = ema(closes, 13)
+    ema_slope = ((ema5 - ema13) / price * 100) if ema5 and ema13 and price > 0 else 0
+    
+    dataset_entry = {
+        "id": str(uuid.uuid4()),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": signal["symbol"],
+        "side": signal.get("side", "LONG"),
+        "price": price,
+        # Indicators
+        "rsi": signal["indicators"]["rsi"],
+        "macd_value": signal["indicators"]["macd_value"],
+        "macd_signal": signal["indicators"]["macd_signal"],
+        "macd_histogram": signal["indicators"]["macd_histogram"],
+        "ema_fast": signal["indicators"]["ema_fast"],
+        "ema_slow": signal["indicators"]["ema_slow"],
+        "ema_slope": round(ema_slope, 6),
+        "bb_upper": signal["indicators"]["bb_upper"],
+        "bb_middle": signal["indicators"]["bb_middle"],
+        "bb_lower": signal["indicators"]["bb_lower"],
+        "atr": signal["indicators"]["atr"],
+        "atr_percent": round(signal["atr"] / price * 100, 4) if price > 0 else 0,
+        # Market conditions
+        "volume_ratio": signal.get("volume_ratio", 0),
+        "volume_passes": signal.get("volume_passes", False),
+        "volatility_regime": signal.get("volatility_regime", "NORMAL"),
+        "volatility_percentile": signal.get("volatility_percentile", 0),
+        "trend": signal.get("trend", "RANGE"),
+        # Candle structure
+        "body_ratio": round(body_ratio, 4),
+        "upper_wick_ratio": round(upper_wick / candle_range, 4) if candle_range > 0 else 0,
+        "lower_wick_ratio": round(lower_wick / candle_range, 4) if candle_range > 0 else 0,
+        "pct_change_5": round(pct_change_5, 4),
+        "pct_change_20": round(pct_change_20, 4),
+        # Scores
+        "technical_probability": signal["probability"],
+        "confidence_score": confidence,
+        "confidence_breakdown": confidence_breakdown,
+        # Filters
+        "filters_passed": filters_passed,
+        "trade_taken": trade_taken,
+        # SL/TP
+        "sl": signal["sl"],
+        "tp": signal["tp"],
+        "rr_ratio": confidence_breakdown.get("rr_ratio", 0),
+        # Outcome (filled later when trade closes)
+        "outcome": None,  # "WIN" or "LOSS"
+        "pnl": None,
+        "pnl_percent": None,
+    }
+    
+    await db_ref.signal_dataset.insert_one(dataset_entry)
+
+async def update_dataset_outcome(db_ref, symbol, side, entry_price, pnl, pnl_pct, exit_reason, opened_at):
+    """Update the signal dataset entry with trade outcome for ML training."""
+    outcome = "WIN" if pnl > 0 else "LOSS"
+    await db_ref.signal_dataset.update_one(
+        {"symbol": symbol, "side": side, "trade_taken": True, "outcome": None, "timestamp": {"$gte": opened_at}},
+        {"$set": {"outcome": outcome, "pnl": pnl, "pnl_percent": pnl_pct, "exit_reason": exit_reason}},
+    )
+
+# ====================================================================
 # SIMULATED PRICE GENERATION
 # ====================================================================
 
@@ -590,18 +856,18 @@ def calculate_signal(symbol, candles=None, allow_short=False):
     raw_score = sum(s * w for s, w in zip(scores, weights))
     prob = 0.25 + raw_score * 0.67
     
-    # SL/TP based on side
+    # SL/TP based on side — enforce minimum R:R of 2.5
     if side == 'LONG':
         struct_sl = structure_stop_loss(candles, 'LONG', atr)
         sl_distance = atr * 1.2
         sl = max(struct_sl, current_price - sl_distance) if struct_sl else current_price - sl_distance
-        tp = current_price + atr * 2.4
+        tp = current_price + atr * 3.2  # 3.2 ATR reward for 1.2 ATR risk = 2.67 R:R
     else:  # SHORT
         highs = [c['high'] for c in candles[-10:]]
         swing_high = max(highs)
         sl = swing_high + (atr * 0.3) if atr else swing_high * 1.002
         sl = max(sl, current_price + atr * 1.2)  # at least 1.2 ATR above
-        tp = current_price - atr * 2.4
+        tp = current_price - atr * 3.2
         tp = max(tp, current_price * 0.5)  # safety floor
     
     return {
@@ -784,6 +1050,10 @@ async def bot_scan_loop():
                     )
                     
                     logger.info(f"[{pos.get('mode','DRY')}] Closed {symbol} via {exit_reason}: PnL {pnl:.4f} USDT")
+                    
+                    # Update cooldown state & dataset outcome
+                    update_cooldown(pnl < 0)
+                    await update_dataset_outcome(db, symbol, pos_side, pos["entry_price"], round(pnl, 4), round(pnl_percent, 4), exit_reason, pos["opened_at"])
                 else:
                     # Update unrealized PnL — side-aware
                     if pos_side == "LONG":
@@ -797,76 +1067,164 @@ async def bot_scan_loop():
                         {"$set": {"current_price": round(current_price, 8), "unrealized_pnl": round(unrealized, 4), "unrealized_pnl_percent": round(unrealized_pct, 4)}}
                     )
             
-            # --- Look for new entries ---
+            # --- Increment cooldown counter ---
+            increment_cooldown()
+            
+            # --- Look for new entries (with smart filters) ---
             open_count = await db.positions.count_documents({"status": "OPEN"})
             if open_count < 3:
-                for symbol in symbols:
-                    if await db.positions.find_one({"symbol": symbol, "status": "OPEN"}):
-                        continue
-                    
-                    can_open, corr_info = await check_correlation_exposure(symbol, db)
-                    if not can_open:
-                        logger.info(f"Skipping {symbol}: correlation exposure ({corr_info['group']}, {corr_info['correlated_positions']} correlated)")
-                        continue
-                    
-                    # In LIVE mode, use real candles for signal calculation
-                    candles_for_signal = None
-                    if is_live:
-                        try:
-                            candles_for_signal = await fetch_live_candles(symbol, interval="3m", limit=60)
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch live candles for {symbol}, falling back to simulated: {e}")
-                    
-                    signal = calculate_signal(symbol, candles_for_signal, allow_short=allow_short)
-                    if signal and signal["probability"] >= min_prob:
-                        if not signal.get("volume_passes", True):
-                            logger.info(f"Skipping {symbol}: low volume (ratio: {signal.get('volume_ratio', 0)})")
-                            continue
-                        
-                        signal_side = signal.get("side", "LONG")
-                        regime_mult = signal.get("regime_size_multiplier", 1.0)
-                        adjusted_usdt = base_usdt * regime_mult
-                        quantity = round(adjusted_usdt / signal["price"], 8)
-                        entry_price = signal["price"]
-                        
-                        # In LIVE mode, place a real order
-                        if is_live:
-                            try:
-                                order_side = "BUY" if signal_side == "LONG" else "SELL"
-                                result = await place_live_market_order(symbol, order_side, adjusted_usdt)
-                                quantity = result["executed_qty"]
-                                entry_price = result["avg_price"]
-                                logger.info(f"LIVE {order_side} {symbol}: order {result['order_id']}, filled {quantity} @ {entry_price}")
-                            except Exception as e:
-                                logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}")
+                # Gate 1: Overtrade limits
+                ot_ok, trades_hr, max_hr, trades_day, max_day = await check_overtrade_limits(db, config)
+                if not ot_ok:
+                    if bot_state["scan_count"] % 30 == 0:  # Log throttled
+                        logger.info(f"Overtrade limit: {trades_hr}/{max_hr} per hour, {trades_day}/{max_day} per day")
+                else:
+                    # Gate 2: Cooldown check
+                    cd_ok, cd_scans, cd_required = check_cooldown(config)
+                    if not cd_ok:
+                        if bot_state["scan_count"] % 10 == 0:
+                            logger.info(f"Cooldown active: {cd_scans}/{cd_required} scans since last loss")
+                    else:
+                        for symbol in symbols:
+                            if await db.positions.find_one({"symbol": symbol, "status": "OPEN"}):
                                 continue
-                        
-                        now = datetime.now(timezone.utc).isoformat()
-                        position_doc = {
-                            "id": str(uuid.uuid4()),
-                            "symbol": symbol,
-                            "side": signal_side,
-                            "entry_price": round(entry_price, 8),
-                            "current_price": round(entry_price, 8),
-                            "stop_loss": round(signal["sl"], 8),
-                            "take_profit": round(signal["tp"], 8),
-                            "quantity": quantity,
-                            "atr": round(signal["atr"], 8),
-                            "probability": round(signal["probability"], 4),
-                            "status": "OPEN",
-                            "trail_activated": False,
-                            "unrealized_pnl": 0.0,
-                            "unrealized_pnl_percent": 0.0,
-                            "opened_at": now,
-                            "mode": current_mode,
-                            "indicators": signal["indicators"],
-                            "volume_ratio": signal.get("volume_ratio", 0),
-                            "volatility_regime": signal.get("volatility_regime", "NORMAL"),
-                            "correlation_group": corr_info["group"]
-                        }
-                        await db.positions.insert_one(position_doc)
-                        logger.info(f"[{current_mode}] Opened {signal_side} {symbol} @ {entry_price:.8f}, Prob: {signal['probability']:.2%}")
-                        break
+                            
+                            # Gate 3: Correlation exposure
+                            can_open, corr_info = await check_correlation_exposure(symbol, db)
+                            if not can_open:
+                                continue
+                            
+                            # Get candles (live or simulated)
+                            candles_for_signal = None
+                            if is_live:
+                                try:
+                                    candles_for_signal = await fetch_live_candles(symbol, interval="3m", limit=60)
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch live candles for {symbol}: {e}")
+                            
+                            signal = calculate_signal(symbol, candles_for_signal, allow_short=allow_short)
+                            if not signal:
+                                continue
+                            
+                            # Use candles from signal generation for filters
+                            candles_used = candles_for_signal if candles_for_signal else generate_candles(symbol, 60)
+                            signal_side = signal.get("side", "LONG")
+                            filters_passed = {}
+                            all_pass = True
+                            
+                            # Gate 4: Technical probability
+                            if signal["probability"] < min_prob:
+                                filters_passed["min_probability"] = False
+                                all_pass = False
+                            else:
+                                filters_passed["min_probability"] = True
+                            
+                            # Gate 5: Volume filter
+                            if not signal.get("volume_passes", True):
+                                filters_passed["volume"] = False
+                                all_pass = False
+                            else:
+                                filters_passed["volume"] = True
+                            
+                            # Gate 6: Spread check
+                            spread_ok, spread_pct = check_spread(candles_used, config.get("spread_max_percent", 0.15))
+                            filters_passed["spread"] = spread_ok
+                            if not spread_ok:
+                                all_pass = False
+                            
+                            # Gate 7: Slippage protection
+                            regime_mult = signal.get("regime_size_multiplier", 1.0)
+                            adjusted_usdt = base_usdt * regime_mult
+                            slip_ok, slip_pct = estimate_slippage(candles_used, adjusted_usdt, config.get("max_slippage_percent", 0.1))
+                            filters_passed["slippage"] = slip_ok
+                            if not slip_ok:
+                                all_pass = False
+                            
+                            # Gate 8: Minimum liquidity
+                            liq_ok, est_vol = check_min_liquidity(candles_used, config.get("min_24h_volume_usdt", 1_000_000))
+                            filters_passed["liquidity"] = liq_ok
+                            if not liq_ok:
+                                all_pass = False
+                            
+                            # Gate 9: Risk/reward ratio
+                            rr_ok, rr_ratio = check_risk_reward(
+                                signal["price"], signal["sl"], signal["tp"], signal_side,
+                                config.get("min_risk_reward_ratio", 2.5)
+                            )
+                            filters_passed["risk_reward"] = rr_ok
+                            if not rr_ok:
+                                all_pass = False
+                            
+                            # Gate 10: Multi-timeframe trend alignment
+                            if config.get("require_trend_alignment", True):
+                                trend_ok, htf_trend = multi_timeframe_trend(candles_used, signal_side)
+                                filters_passed["trend_alignment"] = trend_ok
+                                if not trend_ok:
+                                    all_pass = False
+                            else:
+                                filters_passed["trend_alignment"] = True
+                            
+                            # Gate 11: Confidence score
+                            confidence, conf_breakdown = calculate_confidence_score(signal, candles_used, config)
+                            min_conf = config.get("min_confidence_score", 0.60)
+                            filters_passed["confidence"] = confidence >= min_conf
+                            if confidence < min_conf:
+                                all_pass = False
+                            
+                            # Log signal to dataset (always — for ML training)
+                            await log_signal_to_dataset(db, signal, candles_used, confidence, conf_breakdown, filters_passed, all_pass, config)
+                            
+                            if not all_pass:
+                                failed = [k for k, v in filters_passed.items() if not v]
+                                if bot_state["scan_count"] % 5 == 0:  # Throttled logging
+                                    logger.info(f"Signal rejected {symbol} {signal_side}: failed [{', '.join(failed)}] conf={confidence:.3f}")
+                                continue
+                            
+                            # ALL FILTERS PASSED — OPEN POSITION
+                            quantity = round(adjusted_usdt / signal["price"], 8)
+                            entry_price = signal["price"]
+                            
+                            # In LIVE mode, place real order
+                            if is_live:
+                                try:
+                                    order_side = "BUY" if signal_side == "LONG" else "SELL"
+                                    result = await place_live_market_order(symbol, order_side, adjusted_usdt)
+                                    quantity = result["executed_qty"]
+                                    entry_price = result["avg_price"]
+                                    logger.info(f"LIVE {order_side} {symbol}: order {result['order_id']}, filled {quantity} @ {entry_price}")
+                                except Exception as e:
+                                    logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}")
+                                    continue
+                            
+                            now = datetime.now(timezone.utc).isoformat()
+                            position_doc = {
+                                "id": str(uuid.uuid4()),
+                                "symbol": symbol,
+                                "side": signal_side,
+                                "entry_price": round(entry_price, 8),
+                                "current_price": round(entry_price, 8),
+                                "stop_loss": round(signal["sl"], 8),
+                                "take_profit": round(signal["tp"], 8),
+                                "quantity": quantity,
+                                "atr": round(signal["atr"], 8),
+                                "probability": round(signal["probability"], 4),
+                                "confidence_score": confidence,
+                                "status": "OPEN",
+                                "trail_activated": False,
+                                "unrealized_pnl": 0.0,
+                                "unrealized_pnl_percent": 0.0,
+                                "opened_at": now,
+                                "mode": current_mode,
+                                "indicators": signal["indicators"],
+                                "volume_ratio": signal.get("volume_ratio", 0),
+                                "volatility_regime": signal.get("volatility_regime", "NORMAL"),
+                                "correlation_group": corr_info["group"],
+                                "filters_passed": filters_passed,
+                                "confidence_breakdown": conf_breakdown
+                            }
+                            await db.positions.insert_one(position_doc)
+                            logger.info(f"[{current_mode}] Opened {signal_side} {symbol} @ {entry_price:.8f}, Conf: {confidence:.3f}, R:R: {conf_breakdown['rr_ratio']}")
+                            break
             
             bot_state["scan_count"] += 1
             bot_state["last_scan"] = datetime.now(timezone.utc).isoformat()
@@ -905,6 +1263,16 @@ async def get_default_config():
         "trailing_stop_distance_pips": 1.2,
         "mode": "DRY",
         "allow_short": False,
+        # Phase 1: Smart filters
+        "max_trades_per_hour": 2,
+        "max_trades_per_day": 8,
+        "min_risk_reward_ratio": 2.5,
+        "cooldown_after_loss_scans": 6,
+        "min_confidence_score": 0.60,
+        "spread_max_percent": 0.15,
+        "min_24h_volume_usdt": 1000000,
+        "max_slippage_percent": 0.1,
+        "require_trend_alignment": True,
         "telegram_token": "",
         "telegram_chat_id": ""
     }
@@ -1990,6 +2358,85 @@ async def get_price_history(symbol: str, user=Depends(get_current_user)):
     return data
 
 # ====================================================================
+# DATASET & FILTER STATS API
+# ====================================================================
+
+@api_router.get("/dataset/stats")
+async def get_dataset_stats(user=Depends(get_current_user)):
+    """Get ML training dataset statistics."""
+    total = await db.signal_dataset.count_documents({})
+    taken = await db.signal_dataset.count_documents({"trade_taken": True})
+    rejected = await db.signal_dataset.count_documents({"trade_taken": False})
+    wins = await db.signal_dataset.count_documents({"outcome": "WIN"})
+    losses = await db.signal_dataset.count_documents({"outcome": "LOSS"})
+    pending = await db.signal_dataset.count_documents({"trade_taken": True, "outcome": None})
+    
+    # Recent rejection reasons
+    pipeline = [
+        {"$match": {"trade_taken": False}},
+        {"$sort": {"timestamp": -1}},
+        {"$limit": 100},
+    ]
+    recent_rejected = await db.signal_dataset.aggregate(pipeline).to_list(100)
+    
+    rejection_reasons = {}
+    for r in recent_rejected:
+        for k, v in r.get("filters_passed", {}).items():
+            if not v:
+                rejection_reasons[k] = rejection_reasons.get(k, 0) + 1
+    
+    # Average confidence of taken vs rejected
+    taken_conf_pipeline = [
+        {"$match": {"trade_taken": True}},
+        {"$group": {"_id": None, "avg_conf": {"$avg": "$confidence_score"}}}
+    ]
+    rejected_conf_pipeline = [
+        {"$match": {"trade_taken": False}},
+        {"$group": {"_id": None, "avg_conf": {"$avg": "$confidence_score"}}}
+    ]
+    taken_conf = await db.signal_dataset.aggregate(taken_conf_pipeline).to_list(1)
+    rejected_conf = await db.signal_dataset.aggregate(rejected_conf_pipeline).to_list(1)
+    
+    return {
+        "total_signals": total,
+        "trades_taken": taken,
+        "trades_rejected": rejected,
+        "outcomes": {"wins": wins, "losses": losses, "pending": pending},
+        "win_rate": round(wins / (wins + losses) * 100, 1) if (wins + losses) > 0 else 0,
+        "rejection_reasons": dict(sorted(rejection_reasons.items(), key=lambda x: -x[1])),
+        "avg_confidence_taken": round(taken_conf[0]["avg_conf"], 4) if taken_conf else 0,
+        "avg_confidence_rejected": round(rejected_conf[0]["avg_conf"], 4) if rejected_conf else 0,
+        "cooldown_state": {
+            "scans_since_loss": _cooldown_state["scans_since_loss"],
+            "consecutive_losses": _cooldown_state["consecutive_losses"]
+        }
+    }
+
+@api_router.get("/bot/filters")
+async def get_filter_status(user=Depends(get_current_user)):
+    """Get current smart filter configuration and status."""
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+    if not config:
+        config = await get_default_config()
+    return {
+        "filters": {
+            "max_trades_per_hour": config.get("max_trades_per_hour", 2),
+            "max_trades_per_day": config.get("max_trades_per_day", 8),
+            "min_risk_reward_ratio": config.get("min_risk_reward_ratio", 2.5),
+            "cooldown_after_loss_scans": config.get("cooldown_after_loss_scans", 6),
+            "min_confidence_score": config.get("min_confidence_score", 0.60),
+            "spread_max_percent": config.get("spread_max_percent", 0.15),
+            "min_24h_volume_usdt": config.get("min_24h_volume_usdt", 1000000),
+            "max_slippage_percent": config.get("max_slippage_percent", 0.1),
+            "require_trend_alignment": config.get("require_trend_alignment", True),
+        },
+        "cooldown_state": {
+            "scans_since_loss": _cooldown_state["scans_since_loss"],
+            "consecutive_losses": _cooldown_state["consecutive_losses"]
+        }
+    }
+
+# ====================================================================
 # HEALTH CHECK
 # ====================================================================
 
@@ -2032,6 +2479,9 @@ async def startup_event():
         await db.positions.create_index("status")
         await db.trades.create_index("closed_at")
         await db.bot_state.create_index("key", unique=True)
+        await db.signal_dataset.create_index("timestamp")
+        await db.signal_dataset.create_index("trade_taken")
+        await db.signal_dataset.create_index("outcome")
         logger.info("Database indexes ensured successfully")
     except Exception as e:
         logger.warning(f"Index creation warning (non-fatal): {e}")
