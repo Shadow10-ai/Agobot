@@ -1,14 +1,14 @@
 # AgoBot - Crypto Trading Dashboard PRD
 
 ## Original Problem Statement
-Build a trading app focused on crypto trading with autonomous execution. Ported from Node.js to Python/FastAPI. Now enhanced with ML-ready smart filters for professional-grade signal quality.
+Build a crypto trading bot with autonomous execution. Enhanced with ML-powered smart filters for professional-grade signal quality. The bot learns from past trade outcomes and improves over time.
 
 ## Architecture
-- **Frontend**: React 19 + Tailwind CSS + shadcn/ui + Recharts
-- **Backend**: FastAPI (Python) with async trading bot engine + python-binance
+- **Frontend**: React 19 + Tailwind CSS + shadcn/ui + Recharts + lucide-react
+- **Backend**: FastAPI (Python) with async trading bot engine + python-binance + LightGBM ML
 - **Database**: MongoDB (motor async driver)
 - **Auth**: JWT-based authentication
-- **Trading**: DRY/LIVE mode with Binance API integration + 11-gate smart filter system
+- **Trading**: DRY/LIVE mode with Binance API integration + 12-gate smart filter system + ML model
 
 ## What's Been Implemented
 
@@ -18,47 +18,33 @@ Build a trading app focused on crypto trading with autonomous execution. Ported 
 3. Trading bot engine (DRY/LIVE mode, RSI/MACD/BB/ATR/EMA signals, SL/TP/trailing)
 4. Trade history (paginated, CSV export)
 5. Performance leaderboard
-6. Strategy backtester (historical replay, slippage/fee modeling)
+6. Strategy backtester (slippage/fee modeling)
 7. Strategy comparison (A/B testing)
 8. DRY/LIVE mode toggle with confirmation dialog
 9. LONG/SHORT configurable toggle
 10. Binance API integration (python-binance AsyncClient)
 
 ### Phase 1: Smart Filters & Dataset Builder (Mar 2026)
-11. **11-Gate Signal Filter Chain:**
-    - Gate 1: Overtrade limits (max trades/hour, max trades/day)
-    - Gate 2: Post-loss cooldown (configurable scan wait)
-    - Gate 3: Correlation exposure check
-    - Gate 4: Technical probability threshold
-    - Gate 5: Volume filter
-    - Gate 6: Spread check (bid-ask spread limit)
-    - Gate 7: Slippage protection (estimated slippage limit)
-    - Gate 8: Minimum liquidity (24h volume)
-    - Gate 9: Risk/Reward ratio enforcement (min 2.5:1)
-    - Gate 10: Multi-timeframe trend alignment
-    - Gate 11: Composite confidence score threshold
+11. 12-Gate Signal Filter Chain (Gates 1-11 + ML Gate 12)
+12. Trade Dataset Builder (30+ features per signal)
+13. Confidence Scoring (composite weighted score)
+14. Config Page Smart Filters section
 
-12. **Trade Dataset Builder:**
-    - Logs every signal (taken + rejected) with 30+ features
-    - Features: RSI, MACD, EMA slope, ATR, BB, volume ratio, volatility regime, candle structure, trend, spread, confidence breakdown
-    - Records outcome (WIN/LOSS) after trade closes
-    - Ready for ML model training in Phase 2
-
-13. **Confidence Scoring:**
-    - Composite score: technical (30%) + trend alignment (25%) + volume (15%) + regime (15%) + R:R (15%)
-    - Positions store confidence score + breakdown
-
-14. **Config Page Updates:**
-    - Smart Filters section with 9 configurable parameters
-    - Trend Alignment toggle
-    - All filter values persist to config
+### Phase 2: ML Signal Filter (Mar 2026)
+15. **LightGBM Binary Classifier**: Predicts WIN/LOSS probability for each signal
+16. **20 Input Features**: RSI, MACD, EMA slope, ATR%, volume ratio, volatility percentile, candle structure, price change, confidence, R:R, side, regime, trend, volume_passes
+17. **Auto-Retrain**: Model retrains every 5 closed trades (reinforcement feedback)
+18. **Dataset Seeding**: Auto-seeds from historical trades on startup
+19. **ML Intelligence Page**: Full dashboard showing model status, metrics (accuracy, precision, recall, F1, CV score), feature importance, training dataset stats, rejection reasons, manual Seed/Train controls
+20. **Gate 12**: ML model gates signals with configurable win probability threshold (default 0.55)
+21. **Model Persistence**: Saved to disk via joblib, loaded on restart
 
 ### Production Readiness
 - `/api/health` endpoint for Kubernetes probes
 - Graceful index creation, efficient cleanup
-- `load_dotenv(override=False)` for production env safety
 - Reduced frontend polling (30s)
 - Defensive bot auto-start
+- `load_dotenv(override=False)` for production
 
 ## Key API Endpoints
 - Auth: `POST /api/auth/register|login`, `GET /api/auth/me`
@@ -67,37 +53,33 @@ Build a trading app focused on crypto trading with autonomous execution. Ported 
 - Bot: `GET /api/bot/status`, `POST /api/bot/start|stop|pause|resume`
 - Config: `GET/PUT /api/bot/config`, `PUT /api/bot/telegram`
 - Mode: `GET/PUT /api/bot/mode`
+- Filters: `GET /api/bot/filters`
 - Positions: `GET /api/positions`, `POST /api/positions/{id}/close`
 - Trades: `GET /api/trades`
 - Analytics: `GET /api/performance|leaderboard`
 - Backtester: `POST /api/backtest|compare`
-- **Dataset: `GET /api/dataset/stats`**
-- **Filters: `GET /api/bot/filters`**
+- Dataset: `GET /api/dataset/stats`
+- **ML: `GET /api/ml/status`, `POST /api/ml/train`, `POST /api/ml/seed`**
 
-## Bot IP Address for Binance
+## Bot IP for Binance Trusted IP
 `35.184.53.215`
 
 ## Test Credentials
 - Email: user@example.com, Password: password
 
 ## Prioritized Backlog
-### Phase 2: ML Signal Filter (P0)
-- Feature engineering from signal_dataset
-- Train XGBoost/LightGBM classifier on trade outcomes
-- ML model as gatekeeper (>70% ML confidence)
-- Reinforcement feedback loop (retrain on closed trades)
-
-### Phase 3: Professional Features (P1)
+### Phase 3: Professional Features (P0)
 - Market Regime Detection (HMM-based)
 - Order flow analysis (Binance order book depth)
 - Session-aware trading (London/NYC overlap)
 - Drawdown circuit breaker
 - Monte Carlo risk analysis
 
-### Future (P2)
+### Future (P1)
 - Funding rate arbitrage awareness
 - Whale wallet tracking
 - Fear & Greed index integration
 - News sentiment filter
 - WebSocket real-time updates
 - Multi-exchange support
+- Refactor server.py into modular files
