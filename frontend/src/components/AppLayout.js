@@ -13,6 +13,7 @@ import {
   GitCompareArrows,
   Brain,
   ShieldAlert,
+  Radar,
 } from "lucide-react";
 
 const navItems = [
@@ -23,6 +24,7 @@ const navItems = [
   { path: "/compare", icon: GitCompareArrows, label: "Compare" },
   { path: "/ml", icon: Brain, label: "ML Intelligence" },
   { path: "/risk", icon: ShieldAlert, label: "Risk Management" },
+  { path: "/market-intel", icon: Radar, label: "Market Intel" },
   { path: "/config", icon: Settings, label: "Configuration" },
 ];
 

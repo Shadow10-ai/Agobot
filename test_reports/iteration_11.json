@@ -1,0 +1,97 @@
+{
+  "summary": "Iteration 11 - Phase 4 Market Intelligence features tested comprehensively. All 26 backend tests passed (100%). Frontend Market Intelligence page loads correctly with all 3 sections (Order Flow Analysis, Funding Rates, Whale Activity). Interactive features (symbol card clicks, refresh) work. All regression endpoints healthy.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard - Recent Trades table",
+        "issues": ["Pre-existing: Console error '<tr> cannot be child of <span>' hydration issue (cosmetic, not blocking, same as iteration 10)"]
+      },
+      {
+        "screen": "Dashboard",
+        "issues": ["Pre-existing: Recharts chart width/height -1 on initial load (cosmetic)"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase4_market_intel.py",
+    "/app/test_reports/pytest/pytest_phase4_market_intel.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_phase4_market_intel.py - Created Phase 4 Market Intelligence test suite (26 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (26/26 tests passed)",
+    "frontend": "100% (Market Intel page loads, all 3 sections visible, symbol card clicks work, whale stats correct, funding rates show ARB opportunities, navigation working)"
+  },
+  "test_credentials": "email=test@example.com, password=password",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 4 Market Intelligence fully implemented and tested. Backend endpoints: GET /api/orderflow (symbols with pressure/imbalance_ratio/bid_walls/ask_walls), GET /api/orderflow/{symbol} (depth_levels/total_bid_volume/total_ask_volume/bid_walls/ask_walls - requires valid VALID_SYMBOLS), GET /api/funding-rates (rates per symbol with current_rate/sentiment/arb_opportunity/annualized_yield + has_opportunities flag), GET /api/whale-activity (whale_trades/total_whale_buys/total_whale_sells/net_flow/buy_count/sell_count/whale_signal/symbol_breakdown). All endpoints require JWT auth. Frontend: Market Intelligence page at /market-intel with 3 sections. Sidebar has Radar icon + 'Market Intel' nav item. Symbol cards have data-testid='of-{SYMBOL}'. Sections have data-testid='order-flow-section', 'funding-rates-section', 'whale-activity-section'. All market data is SIMULATED (Binance geo-restricted in Emergent preview). Previous iterations 1-10 cover Phase 1 (smart filters), Phase 2 (ML signal filter, mode toggle), Phase 3 (risk management: circuit breaker, sessions, regime detection, Monte Carlo).",
+  "verified_features": {
+    "orderflow_all_endpoint": {
+      "endpoint": "GET /api/orderflow",
+      "fields": ["symbols (dict per symbol: pressure, imbalance_ratio, total_bid_volume, total_ask_volume, bid_walls, ask_walls, source)"],
+      "valid_pressure_values": ["STRONG_BUY", "BUY", "NEUTRAL", "SELL", "STRONG_SELL"],
+      "status": "WORKING (SIMULATED)"
+    },
+    "orderflow_symbol_endpoint": {
+      "endpoint": "GET /api/orderflow/{symbol}",
+      "fields": ["symbol", "price", "total_bid_volume", "total_ask_volume", "imbalance_ratio", "pressure", "bid_walls", "ask_walls", "depth_levels (4 entries: 0.5%, 1.0%, 2.0%, 5.0%)", "top_bids", "top_asks", "source"],
+      "status": "WORKING (SIMULATED)",
+      "invalid_symbol_returns_400": true
+    },
+    "funding_rates_endpoint": {
+      "endpoint": "GET /api/funding-rates",
+      "fields": ["rates (dict per symbol: current_rate, avg_rate_8h, sentiment, signal, arb_opportunity, annualized_yield, source)", "arbitrage_opportunities", "has_opportunities"],
+      "valid_sentiments": ["EXTREMELY_BULLISH", "BULLISH", "NEUTRAL", "BEARISH", "EXTREMELY_BEARISH"],
+      "status": "WORKING (SIMULATED)"
+    },
+    "whale_activity_endpoint": {
+      "endpoint": "GET /api/whale-activity",
+      "fields": ["whale_trades (list, max 20)", "total_whale_buys", "total_whale_sells", "net_flow", "buy_count", "sell_count", "whale_signal", "min_trade_usdt", "symbol_breakdown (per-symbol: buy_volume, sell_volume, net_flow, count, signal)"],
+      "valid_signals": ["ACCUMULATION", "DISTRIBUTION", "NEUTRAL"],
+      "status": "WORKING (SIMULATED)"
+    },
+    "market_intel_page": {
+      "route": "/market-intel",
+      "components": {
+        "order_flow_section": true,
+        "symbol_cards_with_testid": true,
+        "default_btcusdt_detail_shown": true,
+        "symbol_click_switches_detail": true,
+        "funding_rates_section": true,
+        "arb_opportunity_badge": true,
+        "whale_activity_section": true,
+        "whale_buys_sells_netflow_stats": true,
+        "per_symbol_breakdown": true,
+        "recent_large_trades_list": true,
+        "refresh_button": true
+      },
+      "status": "WORKING"
+    },
+    "sidebar_navigation": {
+      "market_intel_link": true,
+      "radar_icon": true,
+      "status": "WORKING"
+    },
+    "regression_endpoints": {
+      "health": "WORKING (no auth)",
+      "dashboard": "WORKING",
+      "ml_status": "WORKING",
+      "risk_circuit_breaker": "WORKING",
+      "bot_status": "WORKING",
+      "auth_login": "WORKING",
+      "auth_register": "WORKING"
+    }
+  },
+  "mocked_api_note": "All /api/orderflow, /api/orderflow/{symbol}, /api/funding-rates, /api/whale-activity endpoints return SIMULATED/SYNTHETIC data because Binance is geo-restricted in the Emergent preview environment. Source field in responses shows 'simulated'. This is expected behavior."
+}

@@ -10,6 +10,7 @@ import BacktesterPage from "@/pages/BacktesterPage";
 import ComparePage from "@/pages/ComparePage";
 import MLPage from "@/pages/MLPage";
 import RiskPage from "@/pages/RiskPage";
+import MarketIntelPage from "@/pages/MarketIntelPage";
 import { Toaster } from "sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -137,6 +138,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <RiskPage user={user} onLogout={handleLogout} />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/market-intel"
+            element={
+              <ProtectedRoute>
+                <MarketIntelPage user={user} onLogout={handleLogout} />
               </ProtectedRoute>
             }
           />

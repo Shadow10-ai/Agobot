@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 
 class AgoBacktesterTester:
-    def __init__(self, base_url="https://agobot-trading.preview.emergentagent.com"):
+    def __init__(self, base_url="https://smart-filter-bot-2.preview.emergentagent.com"):
         self.base_url = base_url + "/api"
         self.token = None
         self.tests_run = 0
