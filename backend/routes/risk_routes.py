@@ -1,11 +1,12 @@
 """Risk management routes — circuit breaker, sessions, Monte Carlo, market regime."""
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from auth import get_current_user
 from database import db
 from services.risk_service import check_circuit_breaker, reset_circuit_breaker, check_trading_session, detect_market_regime_advanced, run_monte_carlo
 from services.binance_service import generate_candles
 import state
-from config import VALID_SYMBOLS
+from config import VALID_SYMBOLS, TRADING_SESSIONS
 
 router = APIRouter()
 
@@ -14,39 +15,42 @@ router = APIRouter()
 async def get_circuit_breaker(user=Depends(get_current_user)):
     config = await db.bot_config.find_one({"active": True}, {"_id": 0})
     if not config:
-        config = {"max_total_drawdown_percent": 5.0}
-    _, drawdown = await check_circuit_breaker(db, config)
+        config = {}
+    bal_doc = await db.bot_state.find_one({"key": "account_balance"})
+    current_balance = bal_doc["value"] if bal_doc else 10000.0
+    peak = state._circuit_breaker["peak_balance"]
+    dd_pct = ((peak - current_balance) / peak * 100) if peak > 0 else 0
+    max_dd = config.get("max_total_drawdown_percent", 5.0)
     return {
         "tripped": state._circuit_breaker["tripped"],
         "tripped_at": state._circuit_breaker["tripped_at"],
         "drawdown_at_trip": state._circuit_breaker["drawdown_at_trip"],
-        "current_drawdown_pct": drawdown,
-        "peak_balance": state._circuit_breaker["peak_balance"],
-        "max_drawdown_limit": config.get("max_total_drawdown_percent", 5.0),
+        "current_drawdown": round(dd_pct, 2),
+        "peak_balance": round(peak, 2),
+        "current_balance": round(current_balance, 2),
+        "max_drawdown_threshold": max_dd,
     }
 
 
 @router.post("/risk/circuit-breaker/reset")
 async def reset_cb(user=Depends(get_current_user)):
     reset_circuit_breaker()
-    if state.bot_state.get("paused"):
-        state.bot_state["paused"] = False
-    return {"message": "Circuit breaker reset", "tripped": False}
+    state.bot_state["paused"] = False
+    return {"status": "reset", "bot_paused": False}
 
 
 @router.get("/risk/sessions")
 async def get_trading_sessions(user=Depends(get_current_user)):
     config = await db.bot_config.find_one({"active": True}, {"_id": 0}) or {}
-    session_ok, active_session = check_trading_session(config)
-    from config import TRADING_SESSIONS
-    from datetime import datetime, timezone
+    in_session, active_session = check_trading_session(config)
     now_utc = datetime.now(timezone.utc)
     return {
-        "current_session": active_session,
-        "session_ok": session_ok,
-        "current_hour_utc": now_utc.hour,
-        "allowed_sessions": config.get("allowed_sessions", ["ASIA", "LONDON", "NYC"]),
-        "all_sessions": TRADING_SESSIONS,
+        "current_utc": now_utc.isoformat(),
+        "current_hour": now_utc.hour,
+        "in_session": in_session,
+        "active_session": active_session,
+        "sessions": TRADING_SESSIONS,
+        "allowed": config.get("allowed_sessions", ["ASIA", "LONDON", "NYC"]),
     }
 
 
@@ -61,16 +65,18 @@ async def get_monte_carlo(
 
 
 @router.get("/risk/regime")
-async def get_market_regime(symbol: str = "BTCUSDT", user=Depends(get_current_user)):
-    candles = generate_candles(symbol, 100)
-    regime, strength, details = detect_market_regime_advanced(candles)
-    return {
-        "symbol": symbol,
-        "regime": regime,
-        "strength": strength,
-        "details": details,
-        "all_symbols": {
-            s: detect_market_regime_advanced(generate_candles(s, 100))[0]
-            for s in VALID_SYMBOLS[:4]
+async def get_market_regime(user=Depends(get_current_user)):
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+    symbols = config.get("symbols", ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]) if config else ["BTCUSDT"]
+    regimes = {}
+    for symbol in symbols:
+        candles = generate_candles(symbol, 60)
+        regime, strength, details = detect_market_regime_advanced(candles)
+        regimes[symbol] = {
+            "regime": regime,
+            "strength": strength,
+            "details": details,
+            "price": state.SYMBOL_PRICES.get(symbol, 0),
         }
-    }
+    in_session, active_session = check_trading_session(config or {})
+    return {"regimes": regimes, "session": (in_session, active_session)}

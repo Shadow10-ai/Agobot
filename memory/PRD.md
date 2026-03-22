@@ -1,64 +1,141 @@
-# AgoBot - Crypto Trading Dashboard PRD
+# AgoBot - ML-Powered Autonomous Crypto Trading Bot
 
 ## Original Problem Statement
-Build a crypto trading bot with autonomous execution. Enhanced with ML-powered smart filters and professional-grade risk management for institutional-quality trading.
+Port an autonomous crypto trading bot ("AgoBot") from Node.js to Python/React. User reported poor initial trade results and requested institutional-grade upgrades including:
+- Machine Learning (LightGBM) to learn from past trades
+- 11-gate smart filtering (R:R, trend, volume, liquidity, correlation, cooldown, confidence)
+- Professional Risk Management (Circuit breakers, Monte Carlo simulations, Market Regime Detection, Trading Sessions)
+- Market Intelligence (Order book flow, Funding rate arbitrage, Whale tracking)
+
+## User Personas
+- Crypto trader managing personal funds on Binance
+- Needs both DRY (simulated) and LIVE (real) mode
+- Wants data-driven decisions with ML filtering
+
+## Core Requirements
+1. Autonomous bot scanning selected symbols every 10s
+2. 11-gate entry filter before opening any position
+3. LightGBM ML model trained on historical signals
+4. Risk management with circuit breaker and Monte Carlo simulation
+5. Market intelligence dashboard (order flow, funding rates, whale activity)
+6. DRY/LIVE mode toggle with Binance API integration
+7. SHORT selling support (configurable toggle)
 
 ## Architecture
-- **Frontend**: React 19 + Tailwind CSS + shadcn/ui + Recharts + lucide-react
-- **Backend**: FastAPI (Python) + python-binance + LightGBM ML + NumPy
-- **Database**: MongoDB (motor async driver)
-- **Auth**: JWT-based authentication
-- **Trading**: DRY/LIVE mode + 12-gate smart filter + ML model + Risk management
 
-## Features Implemented
+### Backend (FastAPI + MongoDB + Motor async)
+```
+/app/backend/
+├── server.py              (109 lines - entry point, router includes, startup/shutdown)
+├── database.py            (MongoDB Motor client)
+├── config.py              (constants: VALID_SYMBOLS, TRADING_SESSIONS, ML config, JWT)
+├── state.py               (mutable global state: bot_state, ml_model_state, _circuit_breaker, etc.)
+├── auth.py                (JWT helpers: create_token, get_current_user)
+├── models.py              (Pydantic request/response models)
+├── services/
+│   ├── indicators.py      (pure math: ema, sma, rsi_calc, macd_calc, atr_calc, bollinger_bands)
+│   ├── binance_service.py (Binance async client, generate_candles for DRY mode)
+│   ├── filters.py         (11-gate filters + confidence scoring)
+│   ├── ml_service.py      (LightGBM training, ml_predict, dataset logging)
+│   ├── risk_service.py    (circuit breaker, session check, regime detection, monte carlo)
+│   ├── market_intel.py    (order flow, funding rates, whale activity)
+│   ├── signal_service.py  (calculate_signal: indicators → entry signal)
+│   ├── bot_loop.py        (main trading loop: scan → filter → open/close positions)
+│   └── backtest_service.py (historical candle gen + strategy simulation)
+└── routes/
+    ├── auth_routes.py      (/auth/register, /auth/login, /auth/me)
+    ├── bot_routes.py       (/bot/status, /bot/start, /bot/stop, /bot/config, /bot/mode)
+    ├── trading_routes.py   (/dashboard, /positions, /trades, /performance, /leaderboard)
+    ├── backtest_routes.py  (/backtest, /backtest/compare)
+    ├── ml_routes.py        (/ml/status, /ml/train, /ml/dataset)
+    ├── risk_routes.py      (/risk/circuit-breaker, /risk/sessions, /risk/regime, /risk/monte-carlo)
+    ├── market_intel_routes.py (/orderflow, /orderflow/{symbol}, /funding-rates, /whale-activity)
+    └── misc_routes.py      (/prices, /prices/history/{symbol}, /dataset/stats, /health, /backtests)
+```
 
-### Core (Phase 0)
-1. Auth (register, login, JWT), Dashboard, Trading bot engine (DRY/LIVE)
-2. Trade history, Performance leaderboard, Strategy backtester, Strategy comparison
-3. DRY/LIVE mode toggle, LONG/SHORT toggle, Binance API integration
+### Frontend (React + TailwindCSS + Recharts)
+```
+/app/frontend/src/
+├── App.js                 (routing, auth context, axios interceptor)
+├── components/AppLayout.js (sidebar navigation)
+└── pages/
+    ├── LoginPage.js       (register/login)
+    ├── DashboardPage.js   (live positions, recent trades, price feed)
+    ├── ConfigPage.js      (bot settings: symbols, risk params, ML thresholds, SHORT toggle)
+    ├── MLPage.js          (ML model status, feature importance, dataset explorer)
+    ├── RiskPage.js        (circuit breaker, sessions, regime detection, monte carlo)
+    ├── MarketIntelPage.js (order flow, funding rates, whale activity)
+    ├── TradeHistoryPage.js
+    ├── LeaderboardPage.js
+    ├── BacktesterPage.js
+    └── StrategyComparisonPage.js
+```
 
-### Phase 1: Smart Filters & Dataset Builder
-4. 12-Gate Signal Filter Chain (overtrade, cooldown, correlation, probability, volume, spread, slippage, liquidity, R:R, trend alignment, confidence, ML)
-5. Trade Dataset Builder (30+ features per signal)
-6. Confidence Scoring (composite weighted score)
+## What's Been Implemented
 
-### Phase 2: ML Signal Filter
-7. LightGBM classifier (WIN/LOSS) — 20 features, auto-retrain every 5 trades
-8. ML Intelligence page (model metrics, feature importance, dataset stats, manual train/seed)
-9. Gate 12: ML probability threshold
+### Phase 1: Foundation (Jan 2026)
+- FastAPI + MongoDB backend with JWT auth
+- Binance API integration with DRY/LIVE mode toggle
+- RSI/MACD/EMA/ATR/Bollinger Bands indicators
+- Trailing stop-loss with activation threshold
+- React frontend with TailwindCSS
 
-### Phase 3: Professional-Grade Risk Management
-10. **Drawdown Circuit Breaker**: Auto-pauses bot at configurable drawdown threshold. Manual reset to resume.
-11. **Session-Aware Trading**: Configurable trading windows (Asia/London/NYC/Overlap). Blocks trades outside sessions.
-12. **Advanced Market Regime Detection**: Classifies each symbol into TRENDING_UP/DOWN, RANGING, VOLATILE, CALM using trend slope, ADX proxy, ATR%, volume expansion, BB bandwidth.
-13. **Monte Carlo Risk Simulation**: 1000 randomized simulations producing probability of ruin, max drawdowns, balance distribution percentiles, profit probability.
-14. **Risk Management Page**: Full dashboard with circuit breaker status + drawdown bar, trading sessions with active indicator, regime grid for all symbols, Monte Carlo simulation with distribution charts.
+### Phase 2: Smart Filters (Jan 2026)
+- 11-gate entry filter: probability, volume, spread, slippage, liquidity, R:R, trend alignment, confidence, overtrade limits, cooldown, correlation
+- Signal dataset logger for ML training
+- Confidence scoring (5-factor composite)
+- SHORT selling toggle (configurable)
 
-### Production Readiness
-- `/api/health`, graceful indexes, `load_dotenv(override=False)`, 30s polling, defensive startup
+### Phase 3: ML Intelligence (Jan 2026)
+- LightGBM binary classifier (WIN/LOSS prediction)
+- Auto-retrains every 5 new labeled trades
+- MLPage.js dashboard with model metrics and feature importance
+- Seed ML dataset from historical trades on startup
+
+### Phase 4: Professional Risk Management (Jan 2026)
+- Circuit breaker (auto-pause on drawdown threshold)
+- Trading session filter (ASIA/LONDON/NYC)
+- Advanced market regime detection (TRENDING/VOLATILE/CALM/RANGING)
+- Monte Carlo simulation (1000 iterations on historical PnL distribution)
+- RiskPage.js dashboard
+
+### Phase 5: Market Intelligence (Feb 2026)
+- Order flow analysis (bid/ask imbalance, walls, depth levels)
+- Funding rate arbitrage awareness (sentiment signals)
+- Whale activity tracking (large trade detection)
+- MarketIntelPage.js dashboard
+
+### Phase 6: Backend Refactor (Mar 2026)
+- **server.py: 3,518 → 109 lines** (97% reduction)
+- Created 8 route files + 9 service files + 4 foundation modules
+- All 40+ API endpoints verified working after refactor
+- Fixed 3 API field name regressions in risk_routes.py post-refactor
 
 ## Key API Endpoints
-- Auth: `POST /api/auth/register|login`, `GET /api/auth/me`
-- Health: `GET /api/health`
-- Dashboard: `GET /api/dashboard`
-- Bot: `GET /api/bot/status|mode|filters`, `POST /api/bot/start|stop|pause|resume`, `PUT /api/bot/config|mode|telegram`
-- Positions: `GET /api/positions`, `POST /api/positions/{id}/close`
-- Trades: `GET /api/trades`
-- Analytics: `GET /api/performance|leaderboard`
-- Backtester: `POST /api/backtest|compare`
-- ML: `GET /api/ml/status`, `POST /api/ml/train|seed`
-- Dataset: `GET /api/dataset/stats`
-- Risk: `GET /api/risk/circuit-breaker|regime|sessions`, `POST /api/risk/monte-carlo|circuit-breaker/reset`
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /api/auth/login | POST | JWT login |
+| /api/dashboard | GET | Full dashboard data |
+| /api/bot/status | GET | Bot running state |
+| /api/bot/mode | PUT | Toggle DRY/LIVE |
+| /api/ml/status | GET | Model accuracy + feature importance |
+| /api/risk/circuit-breaker | GET | Drawdown status |
+| /api/risk/regime | GET | Market regime per symbol |
+| /api/risk/monte-carlo | POST | Run simulation |
+| /api/orderflow | GET | Order book analysis |
+| /api/funding-rates | GET | Funding rate sentiment |
+| /api/whale-activity | GET | Large trade tracking |
+| /api/backtest | POST | Run strategy backtest |
 
-## Pages (9 total)
-Dashboard, Trade History, Leaderboard, Backtester, Compare, ML Intelligence, Risk Management, Configuration
+## DB Schema
+- `users`: {id, email, hashed_password, name, created_at}
+- `positions`: {id, symbol, side, entry_price, stop_loss, take_profit, status, mode, ml_win_probability, market_regime, session, confidence_score, filters_passed}
+- `trades`: {id, symbol, side, pnl, pnl_percent, exit_reason, opened_at, closed_at, mode}
+- `signal_dataset`: {id, symbol, side, rsi, macd_*, ema_*, atr_*, volume_ratio, confidence_score, filters_passed, trade_taken, outcome, pnl}
+- `bot_config`: {active, symbols, base_usdt_per_trade, min_entry_probability, allow_short, mode, ml_min_win_probability, ...}
+- `bot_state`: {key, value} (account_balance, daily_pnl)
+- `price_history`: {timestamp, prices: {symbol: price}}
 
-## Bot IP: `35.184.53.215`
-## Test Credentials: user@example.com / password
-
-## Backlog
-- P1: Order flow analysis (Binance order book depth)
-- P1: Funding rate arbitrage, Whale wallet tracking
-- P2: Fear & Greed index, News sentiment filter
-- P2: WebSocket real-time updates, Multi-exchange support
-- P3: Refactor server.py into modular files
+## Known Constraints
+- **Binance IP restriction**: Emergent preview IPs are blocked by Binance. Falls back to simulated data automatically. Works fine in user's actual environment.
+- Minor React hydration warning (`<tr>` in DashboardPage.js) — cosmetic only
