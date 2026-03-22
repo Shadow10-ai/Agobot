@@ -89,18 +89,34 @@ async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
     mode = data.mode.upper()
     if mode not in ("DRY", "LIVE"):
         raise HTTPException(status_code=400, detail="Mode must be DRY or LIVE")
-    if mode == "LIVE" and not state.binance_client:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot switch to LIVE mode: Binance API keys not configured or client failed to initialize"
-        )
+    if mode == "LIVE":
+        # Require API keys to be configured — connection failures are handled gracefully per-trade
+        if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot switch to LIVE mode: BINANCE_API_KEY and BINANCE_API_SECRET must be set in .env"
+            )
+        # Re-attempt Binance client initialization if currently disconnected
+        if not state.binance_client:
+            from services.binance_service import init_binance_client
+            await init_binance_client()
+            binance_connected = state.binance_client is not None
+            logger.info(f"Binance reconnect attempt on mode switch: {'connected' if binance_connected else 'still unavailable (geo-restricted or network error)'}")
+        else:
+            binance_connected = True
+    else:
+        binance_connected = state.binance_client is not None
     await db.bot_config.update_one({"active": True}, {"$set": {"mode": mode}}, upsert=True)
     state.bot_state["mode"] = mode
     logger.info(f"Bot mode switched to {mode} by user {user.get('email', 'unknown')}")
+    warning = None
+    if mode == "LIVE" and not binance_connected:
+        warning = "Binance connection unavailable in this environment (geo-restriction). The bot is set to LIVE — it will execute real orders once connectivity is restored."
     return {
         "mode": mode,
-        "binance_connected": state.binance_client is not None,
-        "message": f"Bot is now in {mode} mode" + (" — real trades will be executed!" if mode == "LIVE" else " — trades are simulated.")
+        "binance_connected": binance_connected,
+        "message": f"Bot is now in {mode} mode" + (" — real trades will be executed!" if mode == "LIVE" else " — trades are simulated."),
+        "warning": warning,
     }
 
 
