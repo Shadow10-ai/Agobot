@@ -1,0 +1,83 @@
+{
+  "summary": "Iteration 12 - Post-refactor regression testing (server.py 3518 → 109 lines). Backend: 40/40 tests passed (100%). Frontend: Dashboard and Market Intel pages fully working. Risk Management page has 3 broken sections due to API field name regressions introduced during refactor.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "RiskPage - Circuit Breaker",
+        "issue": "Shows 'undefined%' for Current Drawdown and Threshold. Root cause: refactored /api/risk/circuit-breaker returns `current_drawdown_pct` and `max_drawdown_limit` but RiskPage.js uses `cb.current_drawdown` and `cb.max_drawdown_threshold`",
+        "selector": "[data-testid='circuit-breaker-section']",
+        "priority": "HIGH"
+      },
+      {
+        "component": "RiskPage - Trading Sessions",
+        "issue": "Shows only 'OUTSIDE' badge with no session cards and no UTC time. Root cause: refactored /api/risk/sessions returns `session_ok`, `current_session`, `all_sessions`, `allowed_sessions`, `current_hour_utc` but RiskPage.js uses `in_session`, `active_session`, `sessions`, `allowed`, `current_utc`",
+        "selector": "[data-testid='sessions-section']",
+        "priority": "HIGH"
+      },
+      {
+        "component": "RiskPage - Market Regime Detection",
+        "issue": "Section is completely empty (no symbol cards). Root cause: refactored /api/risk/regime returns top-level `{symbol, regime, strength, details, all_symbols: {BTCUSDT: 'TRENDING_UP' (string)}}` but RiskPage.js uses `regimes?.regimes` which doesn't exist; also `all_symbols` contains strings not objects with regime/strength/details properties",
+        "selector": "[data-testid='regime-section']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard - Recent Trades table",
+        "issues": ["Pre-existing: Console error '<tr> cannot be child of <span>' hydration issue (cosmetic, same as iterations 10-11)"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_regression_refactor.py",
+    "/app/test_reports/pytest/pytest_regression_refactor.xml"
+  ],
+  "action_items": [
+    "FIX CRITICAL: /api/risk/circuit-breaker field names - change `current_drawdown_pct` back to `current_drawdown` and `max_drawdown_limit` back to `max_drawdown_threshold` in routes/risk_routes.py (OR update RiskPage.js to use new field names)",
+    "FIX CRITICAL: /api/risk/sessions field names - change back to `in_session`, `active_session`, `sessions`, `allowed`, `current_utc` (OR update RiskPage.js)",
+    "FIX CRITICAL: /api/risk/regime response structure - change back to return `{regimes: {BTCUSDT: {regime, strength, details, price}, ...}}` format (OR update RiskPage.js)"
+  ],
+  "critical_code_review_comments": [
+    "The backend refactor introduced 3 API field name regressions in risk_routes.py that broke the Risk Management page. The legacy server used: circuit-breaker: {current_drawdown, max_drawdown_threshold}, sessions: {in_session, active_session, sessions, allowed, current_utc, current_hour}, regime: {regimes: {symbol: {regime, strength, details}}}. The refactored version renamed all these fields without updating the frontend.",
+    "The /api/risk/regime response structure also changed - the new `all_symbols` dict contains only regime strings (not objects with regime/strength/details) unlike the old `regimes` dict which had full objects per symbol"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_regression_refactor.py (created - 40 tests covering all required endpoints)"
+  ],
+  "success_rate": {
+    "backend": "100% (40/40 tests passed)",
+    "frontend": "67% (Dashboard ✓, Market Intel ✓, Risk Management 1/4 sections working - Monte Carlo ✓, Circuit Breaker ✗, Sessions ✗, Market Regime ✗)"
+  },
+  "test_credentials": "email=regression_test@example.com, password=testpass123",
+  "seed_data_creation": "Registered regression_test@example.com user",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Regression test after major refactor (server.py 3518→109 lines). All 40 backend APIs pass. Risk Management page has 3 broken sections due to API field name mismatches introduced in the refactor. The fixes are straightforward: either update routes/risk_routes.py to match old field names or update RiskPage.js to use new field names. The new refactored backend correctly routes all endpoints. Binance is geo-restricted - all market data is simulated. Test user: regression_test@example.com / testpass123",
+  "rca_of_issues": {
+    "risk_page_broken": {
+      "root_cause": "During the server.py refactoring (3518→109 lines), the risk_routes.py module was written with different field names than the original server.py implementation. The frontend (RiskPage.js) was not updated to match.",
+      "affected_files": ["backend/routes/risk_routes.py", "frontend/src/pages/RiskPage.js"],
+      "broken_field_mappings": {
+        "circuit_breaker": {
+          "legacy_returns": ["current_drawdown", "max_drawdown_threshold", "current_balance"],
+          "refactored_returns": ["current_drawdown_pct", "max_drawdown_limit"]
+        },
+        "sessions": {
+          "legacy_returns": ["in_session", "active_session", "sessions", "allowed", "current_utc", "current_hour"],
+          "refactored_returns": ["session_ok", "current_session", "all_sessions", "allowed_sessions", "current_hour_utc"]
+        },
+        "regime": {
+          "legacy_returns": "{ regimes: { BTCUSDT: {regime, strength, details, price} } }",
+          "refactored_returns": "{ symbol, regime, strength, details, all_symbols: {BTCUSDT: 'TRENDING_UP'} (strings only) }"
+        }
+      },
+      "fix_recommendation": "Update routes/risk_routes.py to use the same field names as the legacy implementation OR update RiskPage.js to use the new field names from the refactored backend"
+    }
+  },
+  "mocked_api_note": "All /api/orderflow, /api/funding-rates, /api/whale-activity return SIMULATED data. Binance is geo-restricted in this environment. This is expected and not a bug."
+}
