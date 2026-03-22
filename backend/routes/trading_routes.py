@@ -20,7 +20,13 @@ async def get_dashboard(user=Depends(get_current_user)):
         balance = balance_doc["value"]
     daily_pnl_doc = await db.bot_state.find_one({"key": "daily_pnl"}, {"_id": 0})
     daily_pnl = daily_pnl_doc["value"] if daily_pnl_doc else 0.0
-    positions = await db.positions.find({"status": "OPEN"}, {"_id": 0}).to_list(20)
+    positions = await db.positions.find(
+        {"status": "OPEN"},
+        {"_id": 0, "id": 1, "symbol": 1, "side": 1, "entry_price": 1, "current_price": 1,
+         "stop_loss": 1, "take_profit": 1, "quantity": 1, "unrealized_pnl": 1,
+         "unrealized_pnl_percent": 1, "opened_at": 1, "mode": 1, "confidence_score": 1,
+         "probability": 1, "ml_win_probability": 1, "market_regime": 1}
+    ).to_list(20)
     trades = await db.trades.find({}, {"_id": 0}).sort("closed_at", -1).limit(10).to_list(10)
     total_trades = await db.trades.count_documents({})
     winning_trades = await db.trades.count_documents({"pnl": {"$gt": 0}})
@@ -103,7 +109,10 @@ async def get_trades(limit: int = 50, skip: int = 0, symbol: Optional[str] = Non
 
 @router.get("/performance")
 async def get_performance(user=Depends(get_current_user)):
-    trades = await db.trades.find({}, {"_id": 0}).sort("closed_at", 1).to_list(1000)
+    trades = await db.trades.find(
+        {}, {"_id": 0, "symbol": 1, "pnl": 1, "pnl_percent": 1, "closed_at": 1, "opened_at": 1,
+             "stop_loss": 1, "entry_price": 1, "quantity": 1}
+    ).sort("closed_at", 1).limit(500).to_list(500)
     cumulative_pnl = []
     running_pnl = 0
     for t in trades:
@@ -154,7 +163,10 @@ async def get_performance(user=Depends(get_current_user)):
 
 @router.get("/leaderboard")
 async def get_leaderboard(user=Depends(get_current_user)):
-    trades = await db.trades.find({}, {"_id": 0}).sort("closed_at", 1).to_list(5000)
+    trades = await db.trades.find(
+        {}, {"_id": 0, "symbol": 1, "pnl": 1, "pnl_percent": 1, "closed_at": 1, "opened_at": 1,
+             "exit_reason": 1, "entry_price": 1, "exit_price": 1, "stop_loss": 1, "quantity": 1}
+    ).sort("closed_at", 1).limit(1000).to_list(1000)
     if not trades:
         return {
             "symbol_rankings": [], "best_trades": [], "worst_trades": [],
