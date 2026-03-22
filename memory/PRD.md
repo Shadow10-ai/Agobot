@@ -136,6 +136,13 @@ Port an autonomous crypto trading bot ("AgoBot") from Node.js to Python/React. U
 - `bot_state`: {key, value} (account_balance, daily_pnl)
 - `price_history`: {timestamp, prices: {symbol: price}}
 
+## Railway Deployment Files
+- `/app/backend/Dockerfile` — Python 3.11-slim, installs LightGBM deps, single uvicorn worker
+- `/app/frontend/Dockerfile` — Node 18 builder + nginx static server
+- `/app/backend/railway.json` — build/deploy config, healthcheck at `/api/health`
+- `/app/frontend/railway.json` — build config with `REACT_APP_BACKEND_URL` build arg
+- `/app/DEPLOYMENT.md` — full step-by-step Railway deployment guide
+
 ## Known Constraints
 - **Binance IP restriction**: Emergent preview IPs are blocked by Binance. Falls back to simulated data automatically. Works fine in user's actual environment.
 - Minor React hydration warning (`<tr>` in DashboardPage.js) — cosmetic only
