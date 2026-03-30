@@ -36,4 +36,6 @@ services:
         destination: /index.html
     envVars:
       - key: REACT_APP_BACKEND_URL
-        sync: false          # set to backend URL after backend is deployed
+        value: https://agobot-backend.onrender.com
+      - key: NODE_VERSION
+        value: "20.20.1"
