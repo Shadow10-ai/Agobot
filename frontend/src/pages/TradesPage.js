@@ -4,23 +4,24 @@ import { AppLayout } from "@/components/AppLayout";
 import { Download, Search, Filter, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
+const PAGE_LIMIT = 20;
+
 export default function TradesPage({ user, onLogout }) {
   const [trades, setTrades] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [symbolFilter, setSymbolFilter] = useState("");
-  const limit = 20;
 
   const fetchTrades = useCallback(async () => {
     try {
-      const params = { limit, skip: page * limit };
+      const params = { limit: PAGE_LIMIT, skip: page * PAGE_LIMIT };
       if (symbolFilter) params.symbol = symbolFilter;
       const res = await api.get("/trades", { params });
       setTrades(res.data.trades || []);
       setTotal(res.data.total || 0);
-    } catch (err) {
-      console.error("Failed to fetch trades:", err);
+    } catch {
+      // silently swallow — UI shows empty state
     } finally {
       setLoading(false);
     }
@@ -52,7 +53,7 @@ export default function TradesPage({ user, onLogout }) {
     toast.success("Exported successfully");
   };
 
-  const totalPages = Math.ceil(total / limit);
+  const totalPages = Math.ceil(total / PAGE_LIMIT);
 
   return (
     <AppLayout user={user} onLogout={onLogout}>

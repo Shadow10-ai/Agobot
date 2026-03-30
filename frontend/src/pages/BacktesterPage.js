@@ -139,8 +139,8 @@ export default function BacktesterPage({ user, onLogout }) {
     try {
       const res = await api.get("/backtests");
       setHistory(res.data || []);
-    } catch (err) {
-      // Ignore
+    } catch {
+      // ignore — history is non-critical
     }
   }, []);
 
@@ -565,7 +565,7 @@ export default function BacktesterPage({ user, onLogout }) {
                         </thead>
                         <tbody>
                           {trades.map((t, i) => (
-                            <tr key={i} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                            <tr key={`bt-${t.entry_price}-${i}`} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
                               <td className="py-2 px-3 text-[10px] text-zinc-600 font-mono">{i + 1}</td>
                               <td className="py-2 px-3 font-mono text-[10px]">${t.entry_price?.toFixed(2)}</td>
                               <td className="py-2 px-3 font-mono text-[10px]">${t.exit_price?.toFixed(2)}</td>

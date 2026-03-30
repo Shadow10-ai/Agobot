@@ -17,6 +17,9 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 // Create axios instance
+// NOTE: Auth tokens are stored in localStorage for simplicity.
+// For higher security, migrate to httpOnly cookies set by the backend
+// (requires CORS credentials + cookie-based session handling).
 const api = axios.create({ baseURL: API });
 
 // Add auth interceptor

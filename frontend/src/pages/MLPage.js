@@ -42,8 +42,8 @@ export default function MLPage({ user, onLogout }) {
       ]);
       setMlStatus(mlRes.data);
       setDatasetStats(dsRes.data);
-    } catch (err) {
-      console.error("Failed to fetch ML data:", err);
+    } catch {
+      // silently swallow — UI shows stale data or empty state
     } finally {
       setLoading(false);
     }

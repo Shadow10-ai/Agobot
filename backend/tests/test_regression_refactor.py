@@ -9,9 +9,9 @@ import os
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
-TEST_EMAIL = "regression_test@example.com"
-TEST_PASSWORD = "testpass123"
-TEST_NAME = "Regression Tester"
+TEST_EMAIL = os.environ.get("TEST_EMAIL", "regression_test@example.com")
+TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "testpass123")
+TEST_NAME = os.environ.get("TEST_NAME", "Regression Tester")
 
 
 # =====================================================================

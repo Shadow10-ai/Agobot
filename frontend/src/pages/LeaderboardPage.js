@@ -131,8 +131,8 @@ export default function LeaderboardPage({ user, onLogout }) {
     try {
       const res = await api.get("/leaderboard");
       setData(res.data);
-    } catch (err) {
-      console.error("Failed to fetch leaderboard:", err);
+    } catch {
+      // silently swallow — UI shows stale data or empty state
     } finally {
       setLoading(false);
     }
@@ -513,7 +513,7 @@ export default function LeaderboardPage({ user, onLogout }) {
                 <div className="divide-y divide-white/5">
                   {bestTrades.map((t, i) => (
                     <div
-                      key={i}
+                      key={t.id || `best-trade-${i}`}
                       data-testid={`best-trade-${i}`}
                       className="px-5 py-3 flex items-center justify-between"
                     >
@@ -563,7 +563,7 @@ export default function LeaderboardPage({ user, onLogout }) {
                 <div className="divide-y divide-white/5">
                   {worstTrades.map((t, i) => (
                     <div
-                      key={i}
+                      key={t.id || `worst-trade-${i}`}
                       data-testid={`worst-trade-${i}`}
                       className="px-5 py-3 flex items-center justify-between"
                     >

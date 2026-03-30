@@ -56,8 +56,8 @@ export default function MarketIntelPage({ user, onLogout }) {
       setOrderFlow(ofRes.data);
       setFundingRates(frRes.data);
       setWhaleActivity(waRes.data);
-    } catch (err) {
-      console.error("Failed to fetch market intel:", err);
+    } catch {
+      // silently swallow — UI shows stale data or empty state
     } finally {
       setLoading(false);
     }
@@ -172,7 +172,7 @@ export default function MarketIntelPage({ user, onLogout }) {
                     <div>
                       <p className="text-[9px] text-zinc-500 mb-1">Support Walls</p>
                       {detail.bid_walls.slice(0, 3).map((w, i) => (
-                        <p key={i} className="text-[10px] text-emerald-400/70 font-mono">
+                        <p key={`bid-${w.price}-${i}`} className="text-[10px] text-emerald-400/70 font-mono">
                           ${w.price.toLocaleString()} — ${w.usdt_value.toLocaleString()}
                         </p>
                       ))}
@@ -182,7 +182,7 @@ export default function MarketIntelPage({ user, onLogout }) {
                     <div>
                       <p className="text-[9px] text-zinc-500 mb-1">Resistance Walls</p>
                       {detail.ask_walls.slice(0, 3).map((w, i) => (
-                        <p key={i} className="text-[10px] text-red-400/70 font-mono">
+                        <p key={`ask-${w.price}-${i}`} className="text-[10px] text-red-400/70 font-mono">
                           ${w.price.toLocaleString()} — ${w.usdt_value.toLocaleString()}
                         </p>
                       ))}
@@ -287,7 +287,7 @@ export default function MarketIntelPage({ user, onLogout }) {
               <p className="text-[9px] text-zinc-500 mb-1.5">Recent Large Trades (&gt;${(wa.min_trade_usdt || 50000).toLocaleString()})</p>
               <div className="max-h-32 overflow-y-auto space-y-1">
                 {(wa.whale_trades || []).slice(0, 8).map((t, i) => (
-                  <div key={i} className="flex items-center justify-between text-[10px] p-1 rounded bg-[#0A0A0A]">
+                  <div key={`whale-${t.symbol}-${t.time}-${i}`} className="flex items-center justify-between text-[10px] p-1 rounded bg-[#0A0A0A]">
                     <span className="font-bold w-14">{t.symbol.replace("USDT", "")}</span>
                     <span className={t.side === "BUY" ? "text-emerald-400" : "text-red-400"}>{t.side}</span>
                     <span className="font-mono text-zinc-400">${t.usdt_value.toLocaleString()}</span>

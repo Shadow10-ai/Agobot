@@ -75,8 +75,8 @@ const CompareTooltip = ({ active, payload }) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-[#0A0A0A] border border-[#333] rounded px-3 py-2 text-xs">
-      {payload.map((p, i) => (
-        <div key={i} className="font-mono" style={{ color: p.color }}>
+      {payload.map((p) => (
+        <div key={p.dataKey || p.name} className="font-mono" style={{ color: p.color }}>
           {p.name}: ${p.value?.toLocaleString()}
         </div>
       ))}

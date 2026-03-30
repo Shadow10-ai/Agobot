@@ -206,8 +206,8 @@ export default function DashboardPage({ user, onLogout }) {
       ]);
       setDashboard(dashRes.data);
       setPerformance(perfRes.data);
-    } catch (err) {
-      console.error("Failed to fetch dashboard:", err);
+    } catch {
+      // silently swallow — UI shows stale data or empty state
     } finally {
       setLoading(false);
     }

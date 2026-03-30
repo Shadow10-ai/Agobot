@@ -14,8 +14,8 @@ import os
 import time
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-TEST_EMAIL = "user@example.com"
-TEST_PASSWORD = "password"
+TEST_EMAIL = os.environ.get("TEST_EMAIL", "user@example.com")
+TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "password")
 
 # ====================================================================
 # FIXTURES

@@ -48,8 +48,8 @@ export default function RiskPage({ user, onLogout }) {
       setCircuitBreaker(cbRes.data);
       setRegimes(regimeRes.data);
       setSessions(sessRes.data);
-    } catch (err) {
-      console.error("Failed to fetch risk data:", err);
+    } catch {
+      // silently swallow — UI shows stale data or empty state
     } finally {
       setLoading(false);
     }

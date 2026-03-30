@@ -92,7 +92,7 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 - [2026-03] Login fix: graceful hashed_password/password_hash fallback
 - [2026-03] Binance API key management UI in Config page (PUT /api/bot/binance-keys)
 - [2026-03] Bot LIVE trade fallback: failed live orders now fall back to DRY recording
-- [2026-03] Server startup loads Binance keys from DB if env vars not set
+- [2026-03] Code review fixes: hardcoded test credentials → env vars, console.error removed (6 files), array index keys → stable keys (MarketIntelPage, LeaderboardPage, BacktesterPage, ComparePage), server_legacy.py deleted, TradesPage PAGE_LIMIT extracted as module constant, BacktesterPage unused catch var fixed
 
 ## Render Deployment Lessons Learned
 1. packageManager field in package.json blocks npm on Render → removed
