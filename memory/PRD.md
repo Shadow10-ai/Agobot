@@ -1,148 +1,114 @@
-# AgoBot - ML-Powered Autonomous Crypto Trading Bot
+# AgoBot — ML-Powered Autonomous Crypto Trading Bot
 
 ## Original Problem Statement
-Port an autonomous crypto trading bot ("AgoBot") from Node.js to Python/React. User reported poor initial trade results and requested institutional-grade upgrades including:
+Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-grade upgrades:
 - Machine Learning (LightGBM) to learn from past trades
-- 11-gate smart filtering (R:R, trend, volume, liquidity, correlation, cooldown, confidence)
-- Professional Risk Management (Circuit breakers, Monte Carlo simulations, Market Regime Detection, Trading Sessions)
+- 11-gate smart entry filtering (R:R, trend, volume, liquidity)
+- Professional Risk Management (Circuit breakers, Monte Carlo, Market Regime Detection, Sessions)
 - Market Intelligence (Order book flow, Funding rate arbitrage, Whale tracking)
+- Production deployment on Render with MongoDB Atlas
 
-## User Personas
-- Crypto trader managing personal funds on Binance
-- Needs both DRY (simulated) and LIVE (real) mode
-- Wants data-driven decisions with ML filtering
-
-## Core Requirements
-1. Autonomous bot scanning selected symbols every 10s
-2. 11-gate entry filter before opening any position
-3. LightGBM ML model trained on historical signals
-4. Risk management with circuit breaker and Monte Carlo simulation
-5. Market intelligence dashboard (order flow, funding rates, whale activity)
-6. DRY/LIVE mode toggle with Binance API integration
-7. SHORT selling support (configurable toggle)
+## Live Production URLs
+- **Frontend**: https://agobot-frontend.onrender.com
+- **Backend**: https://agobot-backend.onrender.com
+- **Health**: https://agobot-backend.onrender.com/api/health
 
 ## Architecture
-
-### Backend (FastAPI + MongoDB + Motor async)
 ```
-/app/backend/
-├── server.py              (109 lines - entry point, router includes, startup/shutdown)
-├── database.py            (MongoDB Motor client)
-├── config.py              (constants: VALID_SYMBOLS, TRADING_SESSIONS, ML config, JWT)
-├── state.py               (mutable global state: bot_state, ml_model_state, _circuit_breaker, etc.)
-├── auth.py                (JWT helpers: create_token, get_current_user)
-├── models.py              (Pydantic request/response models)
-├── services/
-│   ├── indicators.py      (pure math: ema, sma, rsi_calc, macd_calc, atr_calc, bollinger_bands)
-│   ├── binance_service.py (Binance async client, generate_candles for DRY mode)
-│   ├── filters.py         (11-gate filters + confidence scoring)
-│   ├── ml_service.py      (LightGBM training, ml_predict, dataset logging)
-│   ├── risk_service.py    (circuit breaker, session check, regime detection, monte carlo)
-│   ├── market_intel.py    (order flow, funding rates, whale activity)
-│   ├── signal_service.py  (calculate_signal: indicators → entry signal)
-│   ├── bot_loop.py        (main trading loop: scan → filter → open/close positions)
-│   └── backtest_service.py (historical candle gen + strategy simulation)
-└── routes/
-    ├── auth_routes.py      (/auth/register, /auth/login, /auth/me)
-    ├── bot_routes.py       (/bot/status, /bot/start, /bot/stop, /bot/config, /bot/mode)
-    ├── trading_routes.py   (/dashboard, /positions, /trades, /performance, /leaderboard)
-    ├── backtest_routes.py  (/backtest, /backtest/compare)
-    ├── ml_routes.py        (/ml/status, /ml/train, /ml/dataset)
-    ├── risk_routes.py      (/risk/circuit-breaker, /risk/sessions, /risk/regime, /risk/monte-carlo)
-    ├── market_intel_routes.py (/orderflow, /orderflow/{symbol}, /funding-rates, /whale-activity)
-    └── misc_routes.py      (/prices, /prices/history/{symbol}, /dataset/stats, /health, /backtests)
-```
-
-### Frontend (React + TailwindCSS + Recharts)
-```
-/app/frontend/src/
-├── App.js                 (routing, auth context, axios interceptor)
-├── components/AppLayout.js (sidebar navigation)
-└── pages/
-    ├── LoginPage.js       (register/login)
-    ├── DashboardPage.js   (live positions, recent trades, price feed)
-    ├── ConfigPage.js      (bot settings: symbols, risk params, ML thresholds, SHORT toggle)
-    ├── MLPage.js          (ML model status, feature importance, dataset explorer)
-    ├── RiskPage.js        (circuit breaker, sessions, regime detection, monte carlo)
-    ├── MarketIntelPage.js (order flow, funding rates, whale activity)
-    ├── TradeHistoryPage.js
-    ├── LeaderboardPage.js
-    ├── BacktesterPage.js
-    └── StrategyComparisonPage.js
+/app/
+├── backend/
+│   ├── routes/              # auth, bot, ml, risk, market-intel, misc, trading
+│   ├── services/            # bot_loop, binance_service (15s timeout), ml_service
+│   │                          risk_service, signal_service, backtest_service
+│   ├── models.py
+│   ├── database.py          # Motor AsyncIOMotorClient
+│   ├── config.py
+│   ├── state.py
+│   ├── server.py            # FastAPI entry point (fully graceful startup)
+│   ├── Dockerfile           # python:3.11-slim, uvicorn
+│   ├── requirements.prod.txt
+│   └── .env
+└── frontend/
+    ├── src/pages/
+    │   ├── DashboardPage.js
+    │   ├── ConfigPage.js
+    │   ├── MLPage.js
+    │   ├── RiskPage.js
+    │   ├── MarketIntelPage.js
+    │   ├── TradeHistoryPage.js
+    │   ├── LeaderboardPage.js
+    │   ├── BacktesterPage.js
+    │   └── StrategyComparisonPage.js
+    ├── .npmrc               # legacy-peer-deps=true
+    ├── .nvmrc               # 18
+    ├── package.json         # engines: node >=18
+    └── .env                 # REACT_APP_BACKEND_URL
 ```
 
-## What's Been Implemented
+## Render Deployment Configuration
+- **Frontend service** (srv-d74ps3qdbo4c7391oqf0):
+  - Build: `npm install && npm run build` (Node 20.18.0 via NODE_VERSION env var)
+  - Env vars: REACT_APP_BACKEND_URL, NODE_VERSION=20.18.0, CI=false, DISABLE_ESLINT_PLUGIN=true
+- **Backend service** (srv-d74ps0lm5p6s73fbntt0):
+  - Runtime: Docker (Dockerfile in backend/)
+  - Health check path: /api/health
+  - Env vars: MONGO_URL, DB_NAME, BINANCE_API_KEY, BINANCE_API_SECRET, JWT_SECRET, PYTHON_VERSION
 
-### Phase 1: Foundation (Jan 2026)
-- FastAPI + MongoDB backend with JWT auth
-- Binance API integration with DRY/LIVE mode toggle
-- RSI/MACD/EMA/ATR/Bollinger Bands indicators
-- Trailing stop-loss with activation threshold
-- React frontend with TailwindCSS
-
-### Phase 2: Smart Filters (Jan 2026)
-- 11-gate entry filter: probability, volume, spread, slippage, liquidity, R:R, trend alignment, confidence, overtrade limits, cooldown, correlation
-- Signal dataset logger for ML training
-- Confidence scoring (5-factor composite)
-- SHORT selling toggle (configurable)
-
-### Phase 3: ML Intelligence (Jan 2026)
-- LightGBM binary classifier (WIN/LOSS prediction)
-- Auto-retrains every 5 new labeled trades
-- MLPage.js dashboard with model metrics and feature importance
-- Seed ML dataset from historical trades on startup
-
-### Phase 4: Professional Risk Management (Jan 2026)
-- Circuit breaker (auto-pause on drawdown threshold)
-- Trading session filter (ASIA/LONDON/NYC)
-- Advanced market regime detection (TRENDING/VOLATILE/CALM/RANGING)
-- Monte Carlo simulation (1000 iterations on historical PnL distribution)
-- RiskPage.js dashboard
-
-### Phase 5: Market Intelligence (Feb 2026)
-- Order flow analysis (bid/ask imbalance, walls, depth levels)
-- Funding rate arbitrage awareness (sentiment signals)
-- Whale activity tracking (large trade detection)
-- MarketIntelPage.js dashboard
-
-### Phase 6: Backend Refactor (Mar 2026)
-- **server.py: 3,518 → 109 lines** (97% reduction)
-- Created 8 route files + 9 service files + 4 foundation modules
-- All 40+ API endpoints verified working after refactor
-- Fixed 3 API field name regressions in risk_routes.py post-refactor
-
-## Key API Endpoints
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| /api/auth/login | POST | JWT login |
-| /api/dashboard | GET | Full dashboard data |
-| /api/bot/status | GET | Bot running state |
-| /api/bot/mode | PUT | Toggle DRY/LIVE |
-| /api/ml/status | GET | Model accuracy + feature importance |
-| /api/risk/circuit-breaker | GET | Drawdown status |
-| /api/risk/regime | GET | Market regime per symbol |
-| /api/risk/monte-carlo | POST | Run simulation |
-| /api/orderflow | GET | Order book analysis |
-| /api/funding-rates | GET | Funding rate sentiment |
-| /api/whale-activity | GET | Large trade tracking |
-| /api/backtest | POST | Run strategy backtest |
+## Key Technical Stack
+- **Backend**: FastAPI, MongoDB Atlas (Motor async), asyncio background loops
+- **ML**: LightGBM binary classifier (WIN/LOSS prediction), scikit-learn, pandas
+- **Trading**: Binance API (python-binance), DRY/LIVE mode toggle
+- **Risk**: Monte Carlo simulation, Circuit breakers, Market Regime Detection
+- **Frontend**: React 19, TailwindCSS, Recharts
 
 ## DB Schema
-- `users`: {id, email, hashed_password, name, created_at}
-- `positions`: {id, symbol, side, entry_price, stop_loss, take_profit, status, mode, ml_win_probability, market_regime, session, confidence_score, filters_passed}
-- `trades`: {id, symbol, side, pnl, pnl_percent, exit_reason, opened_at, closed_at, mode}
-- `signal_dataset`: {id, symbol, side, rsi, macd_*, ema_*, atr_*, volume_ratio, confidence_score, filters_passed, trade_taken, outcome, pnl}
-- `bot_config`: {active, symbols, base_usdt_per_trade, min_entry_probability, allow_short, mode, ml_min_win_probability, ...}
-- `bot_state`: {key, value} (account_balance, daily_pnl)
-- `price_history`: {timestamp, prices: {symbol: price}}
+- `users`: {id, email, hashed_password, created_at}
+- `positions`: {id, symbol, side, entry_price, status, market_regime, session, ml_win_prob}
+- `signal_dataset`: {symbol, side, confidence, filters_passed, trade_taken, outcome, <features>}
+- `bot_config`: {user_id, mode, symbols, filters, ml_settings}
+- `trades`: closed trade history
 
-## Railway Deployment Files
-- `/app/backend/Dockerfile` — Python 3.11-slim, installs LightGBM deps, single uvicorn worker
-- `/app/frontend/Dockerfile` — Node 18 builder + nginx static server
-- `/app/backend/railway.json` — build/deploy config, healthcheck at `/api/health`
-- `/app/frontend/railway.json` — build config with `REACT_APP_BACKEND_URL` build arg
-- `/app/DEPLOYMENT.md` — full step-by-step Railway deployment guide
+## Key API Endpoints
+- `GET /api/health` — healthcheck (database status)
+- `POST /api/auth/register` / `POST /api/auth/login` — JWT auth
+- `GET/POST /api/bot/status` / `POST /api/bot/mode` — bot control
+- `GET /api/ml/status` — LightGBM model metrics
+- `POST /api/risk/monte-carlo` — Monte Carlo simulation
+- `GET /api/market-intel/order-flow` — Order book analysis
+- `GET /api/risk/circuit-breaker` — Drawdown status
 
-## Known Constraints
-- **Binance IP restriction**: Emergent preview IPs are blocked by Binance. Falls back to simulated data automatically. Works fine in user's actual environment.
-- Minor React hydration warning (`<tr>` in DashboardPage.js) — cosmetic only
+## What's Been Implemented
+- [2026-02] Initial port from Node.js to Python/React
+- [2026-02] DRY/LIVE mode toggle + SHORT selling toggle
+- [2026-02] Phase 1: 11-Gate Smart Filters + Signal Dataset Logger
+- [2026-02] Phase 2: LightGBM ML integration + MLPage dashboard
+- [2026-02] Phase 3: Professional Risk Management + RiskPage dashboard
+- [2026-02] Phase 4: Market Intelligence (order flow, funding rate, whale tracking)
+- [2026-03] Backend refactored from 3,500-line monolith → modular routes/services
+- [2026-03] Production deployment on Render (frontend + backend LIVE)
+- [2026-03] Binance client 15s timeout fix (prevents startup hang)
+- [2026-03] Graceful startup error handling (all steps wrapped in try/except)
+- [2026-03] MongoDB Atlas connected (Gozmokchris user, qdux5th cluster)
+
+## Render Deployment Lessons Learned
+1. packageManager field in package.json blocks npm on Render → removed
+2. NODE_VERSION must be a real nvm version (20.18.0, not 20.20.1 which is Emergent-specific)
+3. .npmrc with legacy-peer-deps=true needed for React 19 + react-scripts 5
+4. Health check path must be set to /api/health (not default /)
+5. BinanceAsyncClient.create() must have asyncio.wait_for timeout (15s) to prevent startup hang
+6. MongoDB Atlas IP whitelist must include 0.0.0.0/0 for Render dynamic IPs
+
+## P0/P1/P2 Remaining Backlog
+### P1 — Next Up
+- WebSocket real-time updates (replace setInterval polling)
+- Telegram/Email trade notifications (alerts on position open/close)
+
+### P2 — Future
+- Multi-exchange support (Bybit as primary alternative to Binance)
+- Strategy marketplace (share/compare strategies with community)
+- Mobile-responsive dashboard optimization
+
+### P3 — Backlog
+- React hydration warning fix (TradeRow component)
+- Automated backtesting scheduler
+- Multi-user leaderboard (cross-account)
