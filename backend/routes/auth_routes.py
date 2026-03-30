@@ -13,16 +13,17 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 @router.post("/auth/register")
 async def register(user: UserCreate):
-    existing = await db.users.find_one({"email": user.email})
+    existing = await db.users.find_one({"email": user.email}, {"_id": 0})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     user_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    hashed_pw = pwd_context.hash(user.password)
     user_doc = {
         "id": user_id,
         "email": user.email,
-        "name": user.name,
-        "hashed_password": pwd_context.hash(user.password),
+        "name": user.name or "",
+        "hashed_password": hashed_pw,
         "created_at": now,
     }
     await db.users.insert_one(user_doc)
@@ -30,20 +31,29 @@ async def register(user: UserCreate):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {"id": user_id, "email": user.email, "name": user.name, "created_at": now}
+        "user": {"id": user_id, "email": user.email, "name": user.name or "", "created_at": now}
     }
 
 
 @router.post("/auth/login")
 async def login(user: UserLogin):
-    db_user = await db.users.find_one({"email": user.email})
-    if not db_user or not pwd_context.verify(user.password, db_user["hashed_password"]):
+    # Exclude _id to avoid BSON ObjectId serialization issues
+    db_user = await db.users.find_one({"email": user.email}, {"_id": 0})
+    if not db_user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    hashed_pw = db_user.get("hashed_password") or db_user.get("password_hash")
+    if not hashed_pw or not pwd_context.verify(user.password, hashed_pw):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_token(db_user["id"], db_user["email"])
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {"id": db_user["id"], "email": db_user["email"], "name": db_user.get("name", ""), "created_at": db_user.get("created_at", "")}
+        "user": {
+            "id": db_user["id"],
+            "email": db_user["email"],
+            "name": db_user.get("name", ""),
+            "created_at": db_user.get("created_at", "")
+        }
     }
 
 
