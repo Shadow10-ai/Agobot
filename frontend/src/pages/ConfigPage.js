@@ -26,6 +26,8 @@ export default function ConfigPage({ user, onLogout }) {
   const [telegram, setTelegram] = useState({ telegram_token: "", telegram_chat_id: "" });
   const [binanceKeys, setBinanceKeys] = useState({ api_key: "", api_secret: "" });
   const [savingKeys, setSavingKeys] = useState(false);
+  const [testingConn, setTestingConn] = useState(false);
+  const [connTestResult, setConnTestResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingTg, setSavingTg] = useState(false);
@@ -114,19 +116,40 @@ export default function ConfigPage({ user, onLogout }) {
       return;
     }
     setSavingKeys(true);
+    setConnTestResult(null);
     try {
       const res = await api.put("/bot/binance-keys", binanceKeys);
       setModeInfo((prev) => ({ ...prev, binance_connected: res.data.connected, binance_keys_configured: true, api_key_preview: res.data.api_key_preview }));
-      setBinanceKeys({ api_key: "", api_secret: "" }); // clear form after save
+      setBinanceKeys({ api_key: "", api_secret: "" });
       if (res.data.connected) {
         toast.success(res.data.message);
+        setConnTestResult({ ok: true, message: res.data.message });
       } else {
-        toast.warning(res.data.message);
+        toast.warning("Keys saved but connection failed — use 'Test Connection' for details");
       }
     } catch (err) {
       toast.error("Failed to save API keys");
     } finally {
       setSavingKeys(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConn(true);
+    setConnTestResult(null);
+    try {
+      const res = await api.get("/bot/binance-test");
+      setConnTestResult(res.data);
+      setModeInfo((prev) => ({ ...prev, binance_connected: res.data.connected }));
+      if (res.data.connected) {
+        toast.success(res.data.message);
+      } else {
+        toast.error(res.data.error || "Connection failed");
+      }
+    } catch {
+      setConnTestResult({ ok: false, error: "Test request failed — check backend" });
+    } finally {
+      setTestingConn(false);
     }
   };
 
@@ -266,19 +289,49 @@ export default function ConfigPage({ user, onLogout }) {
 
           <div className="flex items-center justify-between">
             <p className="text-[10px] text-zinc-600 max-w-xs leading-relaxed">
-              Keys are stored securely in your database. Enable <strong className="text-zinc-400">Spot Trading</strong> and optionally <strong className="text-zinc-400">Futures</strong> permissions on your Binance key.
-              <a href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener noreferrer" className="text-yellow-500/70 ml-1 hover:text-yellow-400">Create API key →</a>
+              Keys are stored securely in your database. Enable <strong className="text-zinc-400">Spot Trading</strong> and optionally <strong className="text-zinc-400">Futures</strong> permissions on your Binance key.{" "}
+              <strong className="text-yellow-500/80">Set IP restriction to "Unrestricted"</strong> — Render uses dynamic IPs.
+              <a href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener noreferrer" className="text-yellow-500/70 ml-1 hover:text-yellow-400">Manage API keys →</a>
             </p>
-            <button
-              data-testid="save-binance-keys-btn"
-              onClick={handleSaveBinanceKeys}
-              disabled={savingKeys || (!binanceKeys.api_key && !binanceKeys.api_secret)}
-              className="h-9 px-5 rounded-sm bg-yellow-500 text-black text-xs font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(234,179,8,0.3)] transition-colors flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <Zap className="w-3 h-3" />
-              {savingKeys ? "Connecting..." : "Save & Connect"}
-            </button>
+            <div className="flex gap-2 flex-shrink-0">
+              {modeInfo.binance_keys_configured && (
+                <button
+                  data-testid="test-binance-conn-btn"
+                  onClick={handleTestConnection}
+                  disabled={testingConn}
+                  className="h-9 px-4 rounded-sm bg-zinc-700 text-white text-xs font-semibold hover:bg-zinc-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Wifi className="w-3 h-3" />
+                  {testingConn ? "Testing..." : "Test Connection"}
+                </button>
+              )}
+              <button
+                data-testid="save-binance-keys-btn"
+                onClick={handleSaveBinanceKeys}
+                disabled={savingKeys || (!binanceKeys.api_key && !binanceKeys.api_secret)}
+                className="h-9 px-5 rounded-sm bg-yellow-500 text-black text-xs font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(234,179,8,0.3)] transition-colors flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <Zap className="w-3 h-3" />
+                {savingKeys ? "Connecting..." : "Save & Connect"}
+              </button>
+            </div>
           </div>
+
+          {/* Connection test result */}
+          {connTestResult && (
+            <div
+              data-testid="conn-test-result"
+              className={`mt-3 px-3 py-2 rounded text-[11px] font-mono border ${
+                connTestResult.connected
+                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                  : "bg-red-500/10 border-red-500/20 text-red-400"
+              }`}
+            >
+              {connTestResult.connected
+                ? `✓ ${connTestResult.message}`
+                : `✗ ${connTestResult.error}`}
+            </div>
+          )}
         </div>
 
         {/* Trading Mode Toggle */}

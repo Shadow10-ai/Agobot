@@ -171,7 +171,48 @@ async def get_bot_mode(user=Depends(get_current_user)):
     }
 
 
-@router.get("/bot/filters")
+@router.get("/bot/binance-test")
+async def test_binance_connection(user=Depends(get_current_user)):
+    """Attempt a live Binance connection and return exact error detail for diagnosis."""
+    import asyncio
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0}) or {}
+    key = BINANCE_API_KEY or config.get("binance_api_key", "") or state.binance_keys.get("api_key", "")
+    secret = BINANCE_API_SECRET or config.get("binance_api_secret", "") or state.binance_keys.get("api_secret", "")
+    if not key or not secret:
+        return {"connected": False, "error": "No API keys configured. Add them below and click Save & Connect."}
+    from binance import AsyncClient as BinanceAsyncClient
+    try:
+        client = await asyncio.wait_for(
+            BinanceAsyncClient.create(api_key=key, api_secret=secret),
+            timeout=15.0
+        )
+        # Ping account to verify permissions
+        account = await asyncio.wait_for(client.get_account(), timeout=10.0)
+        await client.close_connection()
+        can_trade = account.get("canTrade", False)
+        return {
+            "connected": True,
+            "can_trade": can_trade,
+            "message": "Connected successfully!" + ("" if can_trade else " But Spot Trading permission is disabled on this key.")
+        }
+    except asyncio.TimeoutError:
+        return {"connected": False, "error": "Connection timed out (15s). Binance may be unreachable from this server."}
+    except Exception as e:
+        err = str(e)
+        if "IP" in err or "restricted" in err.lower() or "-1003" in err or "WAF" in err:
+            hint = "IP restriction — go to Binance API settings and set IP access to 'Unrestricted'."
+        elif "Invalid API" in err or "-2014" in err or "-2015" in err:
+            hint = "Invalid API key or secret — double-check you copied both correctly."
+        elif "Timestamp" in err or "-1021" in err:
+            hint = "Clock skew error — server time mismatch with Binance."
+        elif "permission" in err.lower() or "-2010" in err:
+            hint = "Permission error — enable 'Spot & Margin Trading' on the key."
+        else:
+            hint = err
+        return {"connected": False, "error": hint, "raw": err}
+
+
+
 async def get_filter_status(user=Depends(get_current_user)):
     config = await db.bot_config.find_one({"active": True}, {"_id": 0})
     if not config:
