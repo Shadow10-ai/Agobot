@@ -73,27 +73,47 @@ async def startup_event():
         logger.warning(f"Index creation warning: {e}")
 
     # Initialize Binance client (graceful failure expected in restricted IPs)
-    await init_binance_client()
+    try:
+        await init_binance_client()
+    except Exception as e:
+        logger.warning(f"Binance init warning: {e}")
 
     # Ensure default bot config exists
-    config = await db.bot_config.find_one({"active": True})
-    if not config:
-        await get_default_config()
-        logger.info("Default bot config created")
+    try:
+        config = await db.bot_config.find_one({"active": True})
+        if not config:
+            await get_default_config()
+            logger.info("Default bot config created")
+    except Exception as e:
+        logger.warning(f"Bot config init warning (MongoDB may be unreachable): {e}")
 
     # Load or prepare ML model
-    await load_ml_model()
-    await seed_dataset_from_trades(db)
+    try:
+        await load_ml_model()
+    except Exception as e:
+        logger.warning(f"ML model load warning: {e}")
+
+    try:
+        await seed_dataset_from_trades(db)
+    except Exception as e:
+        logger.warning(f"Dataset seed warning: {e}")
 
     # If enough data, retrain
-    labeled_count = await db.signal_dataset.count_documents({"outcome": {"$in": ["WIN", "LOSS"]}})
-    from config import ML_MIN_SAMPLES
-    if labeled_count >= ML_MIN_SAMPLES and state.ml_model_state["status"] != "ACTIVE":
-        logger.info(f"Auto-training ML model on {labeled_count} labeled samples...")
-        await train_ml_model(db)
+    try:
+        labeled_count = await db.signal_dataset.count_documents({"outcome": {"$in": ["WIN", "LOSS"]}})
+        from config import ML_MIN_SAMPLES
+        if labeled_count >= ML_MIN_SAMPLES and state.ml_model_state["status"] != "ACTIVE":
+            logger.info(f"Auto-training ML model on {labeled_count} labeled samples...")
+            await train_ml_model(db)
+    except Exception as e:
+        logger.warning(f"ML training warning: {e}")
 
     # Auto-start the bot
-    await start_bot()
+    try:
+        await start_bot()
+    except Exception as e:
+        logger.warning(f"Bot auto-start warning: {e}")
+
     logger.info("AgoBot startup complete")
 
 
