@@ -2,6 +2,7 @@
 AgoBot — Autonomous Crypto Trading Bot
 FastAPI entry point. All business logic lives in services/ and routes/.
 """
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -73,21 +74,23 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Index creation warning: {e}")
 
-    # Initialize Binance client (graceful failure expected in restricted IPs)
-    try:
-        # Load DB-stored keys if env vars aren't set
-        if not BINANCE_API_KEY or not BINANCE_API_SECRET:
-            config_doc = await db.bot_config.find_one({"active": True}, {"_id": 0})
-            if config_doc:
-                db_key = config_doc.get("binance_api_key", "")
-                db_secret = config_doc.get("binance_api_secret", "")
-                if db_key and db_secret:
-                    state.binance_keys["api_key"] = db_key
-                    state.binance_keys["api_secret"] = db_secret
-                    logger.info("Loaded Binance keys from database")
-        await init_binance_client()
-    except Exception as e:
-        logger.warning(f"Binance init warning: {e}")
+    # Initialize Binance client in background — don't block startup health check
+    async def init_binance_background():
+        try:
+            if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+                config_doc = await db.bot_config.find_one({"active": True}, {"_id": 0})
+                if config_doc:
+                    db_key = config_doc.get("binance_api_key", "")
+                    db_secret = config_doc.get("binance_api_secret", "")
+                    if db_key and db_secret:
+                        state.binance_keys["api_key"] = db_key
+                        state.binance_keys["api_secret"] = db_secret
+                        logger.info("Loaded Binance keys from database")
+            await init_binance_client()
+        except Exception as e:
+            logger.warning(f"Binance background init warning: {e}")
+
+    asyncio.create_task(init_binance_background())
 
     # Ensure default bot config exists
     try:
