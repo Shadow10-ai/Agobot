@@ -247,7 +247,7 @@ export default function ConfigPage({ user, onLogout }) {
         >
           <div className="flex items-center gap-2 mb-4">
             <Key className="w-4 h-4 text-yellow-400" />
-            <h3 className="text-sm font-semibold">Binance API Connection</h3>
+            <h3 className="text-sm font-semibold">Bybit API Connection</h3>
             <span
               data-testid="binance-connection-badge"
               className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider flex items-center gap-1 ${
@@ -272,7 +272,7 @@ export default function ConfigPage({ user, onLogout }) {
                 type="password"
                 value={binanceKeys.api_key}
                 onChange={(e) => setBinanceKeys((prev) => ({ ...prev, api_key: e.target.value }))}
-                placeholder={modeInfo.api_key_preview ? `Current: ${modeInfo.api_key_preview}` : "Paste your Binance API key"}
+                placeholder={modeInfo.api_key_preview ? `Current: ${modeInfo.api_key_preview}` : "Paste your Bybit API key"}
                 className="w-full h-9 px-3 rounded-sm bg-[#0A0A0A] border border-[#27272A] text-sm font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
               />
             </div>
@@ -283,7 +283,7 @@ export default function ConfigPage({ user, onLogout }) {
                 type="password"
                 value={binanceKeys.api_secret}
                 onChange={(e) => setBinanceKeys((prev) => ({ ...prev, api_secret: e.target.value }))}
-                placeholder="Paste your Binance API secret"
+                placeholder="Paste your Bybit API secret"
                 className="w-full h-9 px-3 rounded-sm bg-[#0A0A0A] border border-[#27272A] text-sm font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
               />
             </div>
@@ -291,9 +291,8 @@ export default function ConfigPage({ user, onLogout }) {
 
           <div className="flex items-center justify-between">
             <p className="text-[10px] text-zinc-600 max-w-xs leading-relaxed">
-              Keys are stored securely in your database. Enable <strong className="text-zinc-400">Spot Trading</strong> and optionally <strong className="text-zinc-400">Futures</strong> permissions on your Binance key.{" "}
-              <strong className="text-yellow-500/80">Set IP restriction to "Unrestricted"</strong> — Render uses dynamic IPs.
-              <a href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener noreferrer" className="text-yellow-500/70 ml-1 hover:text-yellow-400">Manage API keys →</a>
+              Keys are stored securely in your database. Enable <strong className="text-zinc-400">Unified Trading</strong> permissions on your Bybit API key. Set IP restriction to <strong className="text-yellow-500/80">"No Restriction"</strong> for cloud hosting.
+              <a href="https://www.bybit.com/app/user/api-management" target="_blank" rel="noopener noreferrer" className="text-yellow-500/70 ml-1 hover:text-yellow-400">Manage API keys →</a>
             </p>
             <div className="flex gap-2 flex-shrink-0">
               {modeInfo.binance_keys_configured && (
@@ -378,7 +377,7 @@ export default function ConfigPage({ user, onLogout }) {
                 )}
                 {modeInfo.binance_keys_configured && !modeInfo.binance_connected && (
                   <p className="text-[10px] text-yellow-500 mt-1">
-                    Binance client not connected. Re-enter your keys above and click "Save &amp; Connect".
+                    Bybit client not connected. Re-enter your keys above and click "Save &amp; Connect".
                   </p>
                 )}
               </div>

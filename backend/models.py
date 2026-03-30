@@ -57,7 +57,7 @@ class TelegramConfig(BaseModel):
     telegram_chat_id: str = ""
 
 
-class BinanceKeysUpdate(BaseModel):
+class ExchangeKeysUpdate(BaseModel):
     api_key: str
     api_secret: str
 

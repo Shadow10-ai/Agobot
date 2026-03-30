@@ -3,10 +3,10 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends
 from auth import get_current_user
 from database import db
-from models import BotConfigUpdate, TelegramConfig, ModeToggle, BinanceKeysUpdate
+from models import BotConfigUpdate, TelegramConfig, ModeToggle, ExchangeKeysUpdate
 import state
 from services.bot_loop import get_default_config, start_bot, stop_bot
-from config import BINANCE_API_KEY, BINANCE_API_SECRET
+from config import BYBIT_API_KEY, BYBIT_API_SECRET
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,8 +85,8 @@ async def update_telegram_config(data: TelegramConfig, user=Depends(get_current_
 
 
 @router.put("/bot/binance-keys")
-async def update_binance_keys(data: BinanceKeysUpdate, user=Depends(get_current_user)):
-    """Save Binance API keys to DB and attempt immediate reconnect."""
+async def update_exchange_keys(data: ExchangeKeysUpdate, user=Depends(get_current_user)):
+    """Save Bybit API keys to DB and attempt immediate reconnect."""
     await db.bot_config.update_one(
         {"active": True},
         {"$set": {"binance_api_key": data.api_key, "binance_api_secret": data.api_secret}},
@@ -98,31 +98,11 @@ async def update_binance_keys(data: BinanceKeysUpdate, user=Depends(get_current_
     error = await init_binance_client(data.api_key, data.api_secret)
     connected = state.binance_client is not None
     key_preview = f"****{data.api_key[-4:]}" if len(data.api_key) > 4 else "****"
-
-    # Translate raw Binance error into a human-readable hint
-    hint = None
-    if error:
-        e = error.lower()
-        if "restricted location" in e or "eligibility" in e:
-            hint = "IP still blocked by Binance — make sure you saved 'Unrestricted' on Binance and waited ~30s for it to take effect."
-        elif "invalid api" in e or "-2014" in e or "-2015" in e or "invalid key" in e:
-            hint = "Invalid API key — double-check you copied the full key correctly."
-        elif "signature" in e or "-1022" in e:
-            hint = "Invalid signature — your API Secret is wrong. Copy it again from Binance exactly."
-        elif "timestamp" in e or "-1021" in e:
-            hint = "Clock skew — server time mismatch with Binance."
-        elif "timed out" in e:
-            hint = "Connection timed out — Binance unreachable from server."
-        elif "permission" in e or "-2010" in e:
-            hint = "Permission denied — enable 'Spot & Margin Trading' on the key."
-        else:
-            hint = error
-
     return {
         "connected": connected,
         "api_key_preview": key_preview,
-        "message": "Binance client connected successfully!" if connected else f"Connection failed: {hint or error}",
-        "error": hint or error if not connected else None,
+        "message": "Bybit client connected successfully!" if connected else f"Connection failed: {error}",
+        "error": error if not connected else None,
     }
 
 
@@ -141,7 +121,7 @@ async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
         if not effective_key or not effective_secret:
             raise HTTPException(
                 status_code=400,
-                detail="Cannot switch to LIVE mode: Binance API keys are not configured. Add them in Settings."
+                detail="Cannot switch to LIVE mode: Bybit API keys are not configured. Add them in Settings."
             )
         # Re-attempt Binance client initialization if not connected
         if not state.binance_client:
@@ -193,44 +173,23 @@ async def get_bot_mode(user=Depends(get_current_user)):
 
 
 @router.get("/bot/binance-test")
-async def test_binance_connection(user=Depends(get_current_user)):
-    """Attempt a live Binance connection and return exact error detail for diagnosis."""
+async def test_exchange_connection(user=Depends(get_current_user)):
+    """Attempt a live Bybit connection and return exact error detail for diagnosis."""
     import asyncio
     config = await db.bot_config.find_one({"active": True}, {"_id": 0}) or {}
-    key = BINANCE_API_KEY or config.get("binance_api_key", "") or state.binance_keys.get("api_key", "")
-    secret = BINANCE_API_SECRET or config.get("binance_api_secret", "") or state.binance_keys.get("api_secret", "")
+    key = (config.get("binance_api_key") or BYBIT_API_KEY or state.binance_keys.get("api_key", ""))
+    secret = (config.get("binance_api_secret") or BYBIT_API_SECRET or state.binance_keys.get("api_secret", ""))
     if not key or not secret:
-        return {"connected": False, "error": "No API keys configured. Add them below and click Save & Connect."}
-    from binance import AsyncClient as BinanceAsyncClient
-    try:
-        client = await asyncio.wait_for(
-            BinanceAsyncClient.create(api_key=key, api_secret=secret),
-            timeout=15.0
-        )
-        # Ping account to verify permissions
-        account = await asyncio.wait_for(client.get_account(), timeout=10.0)
-        await client.close_connection()
-        can_trade = account.get("canTrade", False)
-        return {
-            "connected": True,
-            "can_trade": can_trade,
-            "message": "Connected successfully!" + ("" if can_trade else " But Spot Trading permission is disabled on this key.")
-        }
-    except asyncio.TimeoutError:
-        return {"connected": False, "error": "Connection timed out (15s). Binance may be unreachable from this server."}
-    except Exception as e:
-        err = str(e)
-        if "IP" in err or "restricted" in err.lower() or "-1003" in err or "WAF" in err:
-            hint = "IP restriction — go to Binance API settings and set IP access to 'Unrestricted'."
-        elif "Invalid API" in err or "-2014" in err or "-2015" in err:
-            hint = "Invalid API key or secret — double-check you copied both correctly."
-        elif "Timestamp" in err or "-1021" in err:
-            hint = "Clock skew error — server time mismatch with Binance."
-        elif "permission" in err.lower() or "-2010" in err:
-            hint = "Permission error — enable 'Spot & Margin Trading' on the key."
-        else:
-            hint = err
-        return {"connected": False, "error": hint, "raw": err}
+        return {"connected": False, "error": "No API keys configured. Add them in Settings."}
+    from services.binance_service import init_binance_client
+    error = await init_binance_client(key, secret)
+    connected = state.binance_client is not None
+    return {
+        "connected": connected,
+        "can_trade": connected,
+        "message": "Connected to Bybit successfully!" if connected else None,
+        "error": error if not connected else None,
+    }
 
 
 

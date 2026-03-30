@@ -11,9 +11,9 @@ SECRET_KEY = os.environ.get('JWT_SECRET', 'cr7pt0-b0t-s3cr3t-k3y-2026')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 
-# Binance
-BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY', '')
-BINANCE_API_SECRET = os.environ.get('BINANCE_API_SECRET', '')
+# Bybit (primary exchange)
+BYBIT_API_KEY = os.environ.get('BYBIT_API_KEY', '')
+BYBIT_API_SECRET = os.environ.get('BYBIT_API_SECRET', '')
 
 # Valid trading symbols
 VALID_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT']
