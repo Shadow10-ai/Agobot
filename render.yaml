@@ -3,6 +3,7 @@ services:
   - type: web
     name: agobot-backend
     runtime: python
+    region: frankfurt
     rootDir: backend
     buildCommand: pip install -r requirements.prod.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1
@@ -10,15 +11,15 @@ services:
     healthCheckPath: /api/health
     envVars:
       - key: MONGO_URL
-        sync: false          # set manually in Render dashboard
+        sync: false
       - key: DB_NAME
         value: agobot_prod
       - key: JWT_SECRET
-        generateValue: true  # Render auto-generates a strong secret
-      - key: BINANCE_API_KEY
-        sync: false          # set manually in Render dashboard
-      - key: BINANCE_API_SECRET
-        sync: false          # set manually in Render dashboard
+        generateValue: true
+      - key: BYBIT_API_KEY
+        sync: false
+      - key: BYBIT_API_SECRET
+        sync: false
       - key: PYTHON_VERSION
         value: "3.11.0"
 
@@ -26,6 +27,7 @@ services:
   - type: web
     name: agobot-frontend
     runtime: static
+    region: frankfurt
     rootDir: frontend
     buildCommand: yarn install && yarn build
     staticPublishPath: build
