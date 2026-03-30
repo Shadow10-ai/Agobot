@@ -134,8 +134,9 @@ async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
     config = await db.bot_config.find_one({"active": True}, {"_id": 0}) or {}
     db_key = config.get("binance_api_key", "")
     db_secret = config.get("binance_api_secret", "")
-    effective_key = BINANCE_API_KEY or db_key
-    effective_secret = BINANCE_API_SECRET or db_secret
+    # DB keys (set via UI) take priority over env vars
+    effective_key = db_key or BINANCE_API_KEY
+    effective_secret = db_secret or BINANCE_API_SECRET
     if mode == "LIVE":
         if not effective_key or not effective_secret:
             raise HTTPException(
@@ -176,12 +177,13 @@ async def get_bot_mode(user=Depends(get_current_user)):
     if db_key and db_secret and not state.binance_keys.get("api_key"):
         state.binance_keys["api_key"] = db_key
         state.binance_keys["api_secret"] = db_secret
-    keys_configured = bool(BINANCE_API_KEY and BINANCE_API_SECRET) or bool(db_key and db_secret)
+    keys_configured = bool(db_key and db_secret) or bool(BINANCE_API_KEY and BINANCE_API_SECRET)
+    # Show DB key preview first (it's what's actively used)
     key_preview = ""
-    if BINANCE_API_KEY:
-        key_preview = f"****{BINANCE_API_KEY[-4:]}"
-    elif db_key:
+    if db_key:
         key_preview = f"****{db_key[-4:]}"
+    elif BINANCE_API_KEY:
+        key_preview = f"****{BINANCE_API_KEY[-4:]}"
     return {
         "mode": current_mode,
         "binance_connected": state.binance_client is not None,

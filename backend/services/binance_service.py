@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 async def init_binance_client(api_key: str = None, api_secret: str = None):
     """Initialize the Binance async client. Returns error string on failure, None on success."""
+    # Priority: explicit params > DB/state keys > env vars
     key = api_key or state.binance_keys.get("api_key") or BINANCE_API_KEY
     secret = api_secret or state.binance_keys.get("api_secret") or BINANCE_API_SECRET
     if not key or not secret:
