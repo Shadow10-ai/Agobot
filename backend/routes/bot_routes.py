@@ -87,23 +87,42 @@ async def update_telegram_config(data: TelegramConfig, user=Depends(get_current_
 @router.put("/bot/binance-keys")
 async def update_binance_keys(data: BinanceKeysUpdate, user=Depends(get_current_user)):
     """Save Binance API keys to DB and attempt immediate reconnect."""
-    # Persist keys to bot_config document
     await db.bot_config.update_one(
         {"active": True},
         {"$set": {"binance_api_key": data.api_key, "binance_api_secret": data.api_secret}},
         upsert=True
     )
-    # Update runtime state and attempt reconnect
     state.binance_keys["api_key"] = data.api_key
     state.binance_keys["api_secret"] = data.api_secret
     from services.binance_service import init_binance_client
-    await init_binance_client(data.api_key, data.api_secret)
+    error = await init_binance_client(data.api_key, data.api_secret)
     connected = state.binance_client is not None
     key_preview = f"****{data.api_key[-4:]}" if len(data.api_key) > 4 else "****"
+
+    # Translate raw Binance error into a human-readable hint
+    hint = None
+    if error:
+        e = error.lower()
+        if "restricted location" in e or "eligibility" in e:
+            hint = "IP still blocked by Binance — make sure you saved 'Unrestricted' on Binance and waited ~30s for it to take effect."
+        elif "invalid api" in e or "-2014" in e or "-2015" in e or "invalid key" in e:
+            hint = "Invalid API key — double-check you copied the full key correctly."
+        elif "signature" in e or "-1022" in e:
+            hint = "Invalid signature — your API Secret is wrong. Copy it again from Binance exactly."
+        elif "timestamp" in e or "-1021" in e:
+            hint = "Clock skew — server time mismatch with Binance."
+        elif "timed out" in e:
+            hint = "Connection timed out — Binance unreachable from server."
+        elif "permission" in e or "-2010" in e:
+            hint = "Permission denied — enable 'Spot & Margin Trading' on the key."
+        else:
+            hint = error
+
     return {
         "connected": connected,
         "api_key_preview": key_preview,
-        "message": "Binance client connected successfully!" if connected else "Keys saved. Connection failed — check key validity and IP whitelist."
+        "message": "Binance client connected successfully!" if connected else f"Connection failed: {hint or error}",
+        "error": hint or error if not connected else None,
     }
 
 

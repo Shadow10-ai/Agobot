@@ -125,7 +125,9 @@ export default function ConfigPage({ user, onLogout }) {
         toast.success(res.data.message);
         setConnTestResult({ ok: true, message: res.data.message });
       } else {
-        toast.warning("Keys saved but connection failed — use 'Test Connection' for details");
+        const errMsg = res.data.error || res.data.message || "Connection failed";
+        toast.error(errMsg);
+        setConnTestResult({ connected: false, error: errMsg });
       }
     } catch (err) {
       toast.error("Failed to save API keys");

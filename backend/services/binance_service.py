@@ -10,14 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 async def init_binance_client(api_key: str = None, api_secret: str = None):
-    """Initialize the Binance async client.
-    Priority: passed params > state.binance_keys > env vars
-    """
+    """Initialize the Binance async client. Returns error string on failure, None on success."""
     key = api_key or state.binance_keys.get("api_key") or BINANCE_API_KEY
     secret = api_secret or state.binance_keys.get("api_secret") or BINANCE_API_SECRET
     if not key or not secret:
         logger.warning("Binance API keys not configured — LIVE mode unavailable")
-        return
+        return "No API keys configured."
     # Close existing client first
     if state.binance_client:
         try:
@@ -35,12 +33,16 @@ async def init_binance_client(api_key: str = None, api_secret: str = None):
         state.binance_keys["api_key"] = key
         state.binance_keys["api_secret"] = secret
         logger.info("Binance async client initialized successfully")
+        return None  # success
     except asyncio.TimeoutError:
         logger.warning("Binance client init timed out (15s) — DRY mode only")
         state.binance_client = None
+        return "Connection timed out (15s). Binance may be unreachable from this server."
     except Exception as e:
-        logger.error(f"Failed to initialize Binance client: {e}")
+        err = str(e)
+        logger.error(f"Failed to initialize Binance client: {err}")
         state.binance_client = None
+        return err
 
 
 async def close_binance_client():
