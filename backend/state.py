@@ -49,5 +49,8 @@ ml_model_state = {
 # Binance async client (reassigned — use `import state; state.binance_client = ...`)
 binance_client = None
 
+# Runtime Binance keys — loaded from DB or env vars, updated via UI
+binance_keys: dict = {"api_key": "", "api_secret": ""}
+
 # Bot background asyncio task (reassigned — same pattern)
 bot_task = None

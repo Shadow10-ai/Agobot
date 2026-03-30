@@ -33,6 +33,7 @@ from routes.misc_routes import router as misc_router
 # Import startup services
 from database import db
 import state
+from config import BINANCE_API_KEY, BINANCE_API_SECRET
 from services.binance_service import init_binance_client, close_binance_client
 from services.ml_service import load_ml_model, seed_dataset_from_trades, train_ml_model
 from services.bot_loop import start_bot, get_default_config
@@ -74,6 +75,16 @@ async def startup_event():
 
     # Initialize Binance client (graceful failure expected in restricted IPs)
     try:
+        # Load DB-stored keys if env vars aren't set
+        if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+            config_doc = await db.bot_config.find_one({"active": True}, {"_id": 0})
+            if config_doc:
+                db_key = config_doc.get("binance_api_key", "")
+                db_secret = config_doc.get("binance_api_secret", "")
+                if db_key and db_secret:
+                    state.binance_keys["api_key"] = db_key
+                    state.binance_keys["api_secret"] = db_secret
+                    logger.info("Loaded Binance keys from database")
         await init_binance_client()
     except Exception as e:
         logger.warning(f"Binance init warning: {e}")

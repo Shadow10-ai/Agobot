@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Depends
 from auth import get_current_user
 from database import db
-from models import BotConfigUpdate, TelegramConfig, ModeToggle
+from models import BotConfigUpdate, TelegramConfig, ModeToggle, BinanceKeysUpdate
 import state
 from services.bot_loop import get_default_config, start_bot, stop_bot
 from config import BINANCE_API_KEY, BINANCE_API_SECRET
@@ -84,24 +84,51 @@ async def update_telegram_config(data: TelegramConfig, user=Depends(get_current_
     return {"status": "updated"}
 
 
+@router.put("/bot/binance-keys")
+async def update_binance_keys(data: BinanceKeysUpdate, user=Depends(get_current_user)):
+    """Save Binance API keys to DB and attempt immediate reconnect."""
+    # Persist keys to bot_config document
+    await db.bot_config.update_one(
+        {"active": True},
+        {"$set": {"binance_api_key": data.api_key, "binance_api_secret": data.api_secret}},
+        upsert=True
+    )
+    # Update runtime state and attempt reconnect
+    state.binance_keys["api_key"] = data.api_key
+    state.binance_keys["api_secret"] = data.api_secret
+    from services.binance_service import init_binance_client
+    await init_binance_client(data.api_key, data.api_secret)
+    connected = state.binance_client is not None
+    key_preview = f"****{data.api_key[-4:]}" if len(data.api_key) > 4 else "****"
+    return {
+        "connected": connected,
+        "api_key_preview": key_preview,
+        "message": "Binance client connected successfully!" if connected else "Keys saved. Connection failed — check key validity and IP whitelist."
+    }
+
+
 @router.put("/bot/mode")
 async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
     mode = data.mode.upper()
     if mode not in ("DRY", "LIVE"):
         raise HTTPException(status_code=400, detail="Mode must be DRY or LIVE")
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0}) or {}
+    db_key = config.get("binance_api_key", "")
+    db_secret = config.get("binance_api_secret", "")
+    effective_key = BINANCE_API_KEY or db_key
+    effective_secret = BINANCE_API_SECRET or db_secret
     if mode == "LIVE":
-        # Require API keys to be configured — connection failures are handled gracefully per-trade
-        if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+        if not effective_key or not effective_secret:
             raise HTTPException(
                 status_code=400,
-                detail="Cannot switch to LIVE mode: BINANCE_API_KEY and BINANCE_API_SECRET must be set in .env"
+                detail="Cannot switch to LIVE mode: Binance API keys are not configured. Add them in Settings."
             )
-        # Re-attempt Binance client initialization if currently disconnected
+        # Re-attempt Binance client initialization if not connected
         if not state.binance_client:
             from services.binance_service import init_binance_client
-            await init_binance_client()
+            await init_binance_client(effective_key or None, effective_secret or None)
             binance_connected = state.binance_client is not None
-            logger.info(f"Binance reconnect attempt on mode switch: {'connected' if binance_connected else 'still unavailable (geo-restricted or network error)'}")
+            logger.info(f"Binance reconnect on mode switch: {'connected' if binance_connected else 'failed'}")
         else:
             binance_connected = True
     else:
@@ -111,7 +138,7 @@ async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
     logger.info(f"Bot mode switched to {mode} by user {user.get('email', 'unknown')}")
     warning = None
     if mode == "LIVE" and not binance_connected:
-        warning = "Binance connection unavailable in this environment (geo-restriction). The bot is set to LIVE — it will execute real orders once connectivity is restored."
+        warning = "Binance connection unavailable. The bot is set to LIVE — real orders will execute once connected."
     return {
         "mode": mode,
         "binance_connected": binance_connected,
@@ -124,10 +151,23 @@ async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
 async def get_bot_mode(user=Depends(get_current_user)):
     config = await db.bot_config.find_one({"active": True}, {"_id": 0})
     current_mode = config.get("mode", "DRY") if config else "DRY"
+    db_key = config.get("binance_api_key", "") if config else ""
+    db_secret = config.get("binance_api_secret", "") if config else ""
+    # Load DB keys into runtime state if not already loaded (e.g., after restart)
+    if db_key and db_secret and not state.binance_keys.get("api_key"):
+        state.binance_keys["api_key"] = db_key
+        state.binance_keys["api_secret"] = db_secret
+    keys_configured = bool(BINANCE_API_KEY and BINANCE_API_SECRET) or bool(db_key and db_secret)
+    key_preview = ""
+    if BINANCE_API_KEY:
+        key_preview = f"****{BINANCE_API_KEY[-4:]}"
+    elif db_key:
+        key_preview = f"****{db_key[-4:]}"
     return {
         "mode": current_mode,
         "binance_connected": state.binance_client is not None,
-        "binance_keys_configured": bool(BINANCE_API_KEY and BINANCE_API_SECRET)
+        "binance_keys_configured": keys_configured,
+        "api_key_preview": key_preview,
     }
 
 

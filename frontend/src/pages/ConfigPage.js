@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
-import { Save, RotateCcw, AlertTriangle, Check, Settings, Bell, Shield, Zap } from "lucide-react";
+import { Save, RotateCcw, AlertTriangle, Check, Settings, Bell, Shield, Zap, Key, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 
 const InputField = ({ label, name, value, onChange, type = "number", step, min, max, description }) => (
@@ -24,10 +24,12 @@ const InputField = ({ label, name, value, onChange, type = "number", step, min, 
 export default function ConfigPage({ user, onLogout }) {
   const [config, setConfig] = useState(null);
   const [telegram, setTelegram] = useState({ telegram_token: "", telegram_chat_id: "" });
+  const [binanceKeys, setBinanceKeys] = useState({ api_key: "", api_secret: "" });
+  const [savingKeys, setSavingKeys] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingTg, setSavingTg] = useState(false);
-  const [modeInfo, setModeInfo] = useState({ mode: "DRY", binance_connected: false, binance_keys_configured: false });
+  const [modeInfo, setModeInfo] = useState({ mode: "DRY", binance_connected: false, binance_keys_configured: false, api_key_preview: "" });
   const [showLiveConfirm, setShowLiveConfirm] = useState(false);
   const [switchingMode, setSwitchingMode] = useState(false);
 
@@ -103,6 +105,28 @@ export default function ConfigPage({ user, onLogout }) {
       toast.error("Failed to save Telegram settings");
     } finally {
       setSavingTg(false);
+    }
+  };
+
+  const handleSaveBinanceKeys = async () => {
+    if (!binanceKeys.api_key || !binanceKeys.api_secret) {
+      toast.error("Both API Key and Secret are required");
+      return;
+    }
+    setSavingKeys(true);
+    try {
+      const res = await api.put("/bot/binance-keys", binanceKeys);
+      setModeInfo((prev) => ({ ...prev, binance_connected: res.data.connected, binance_keys_configured: true, api_key_preview: res.data.api_key_preview }));
+      setBinanceKeys({ api_key: "", api_secret: "" }); // clear form after save
+      if (res.data.connected) {
+        toast.success(res.data.message);
+      } else {
+        toast.warning(res.data.message);
+      }
+    } catch (err) {
+      toast.error("Failed to save API keys");
+    } finally {
+      setSavingKeys(false);
     }
   };
 
@@ -187,6 +211,76 @@ export default function ConfigPage({ user, onLogout }) {
           </div>
         </div>
 
+        {/* Exchange Connection */}
+        <div
+          data-testid="exchange-connection-section"
+          className={`relative overflow-hidden rounded-lg border p-5 ${
+            modeInfo.binance_connected
+              ? "bg-emerald-500/5 border-emerald-500/20"
+              : "bg-zinc-800/30 border-white/5"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Key className="w-4 h-4 text-yellow-400" />
+            <h3 className="text-sm font-semibold">Binance API Connection</h3>
+            <span
+              data-testid="binance-connection-badge"
+              className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider flex items-center gap-1 ${
+                modeInfo.binance_connected
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  : "bg-red-500/20 text-red-400 border border-red-500/30"
+              }`}
+            >
+              {modeInfo.binance_connected ? <Wifi className="w-2.5 h-2.5" /> : <WifiOff className="w-2.5 h-2.5" />}
+              {modeInfo.binance_connected ? "CONNECTED" : "DISCONNECTED"}
+            </span>
+            {modeInfo.api_key_preview && (
+              <span className="text-[10px] text-zinc-500 font-mono ml-1">Key: {modeInfo.api_key_preview}</span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="overline block mb-2">API Key</label>
+              <input
+                data-testid="binance-api-key-input"
+                type="password"
+                value={binanceKeys.api_key}
+                onChange={(e) => setBinanceKeys((prev) => ({ ...prev, api_key: e.target.value }))}
+                placeholder={modeInfo.api_key_preview ? `Current: ${modeInfo.api_key_preview}` : "Paste your Binance API key"}
+                className="w-full h-9 px-3 rounded-sm bg-[#0A0A0A] border border-[#27272A] text-sm font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="overline block mb-2">API Secret</label>
+              <input
+                data-testid="binance-api-secret-input"
+                type="password"
+                value={binanceKeys.api_secret}
+                onChange={(e) => setBinanceKeys((prev) => ({ ...prev, api_secret: e.target.value }))}
+                placeholder="Paste your Binance API secret"
+                className="w-full h-9 px-3 rounded-sm bg-[#0A0A0A] border border-[#27272A] text-sm font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] text-zinc-600 max-w-xs leading-relaxed">
+              Keys are stored securely in your database. Enable <strong className="text-zinc-400">Spot Trading</strong> and optionally <strong className="text-zinc-400">Futures</strong> permissions on your Binance key.
+              <a href="https://www.binance.com/en/my/settings/api-management" target="_blank" rel="noopener noreferrer" className="text-yellow-500/70 ml-1 hover:text-yellow-400">Create API key →</a>
+            </p>
+            <button
+              data-testid="save-binance-keys-btn"
+              onClick={handleSaveBinanceKeys}
+              disabled={savingKeys || (!binanceKeys.api_key && !binanceKeys.api_secret)}
+              className="h-9 px-5 rounded-sm bg-yellow-500 text-black text-xs font-bold hover:bg-yellow-400 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(234,179,8,0.3)] transition-colors flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <Zap className="w-3 h-3" />
+              {savingKeys ? "Connecting..." : "Save & Connect"}
+            </button>
+          </div>
+        </div>
+
         {/* Trading Mode Toggle */}
         <div
           data-testid="mode-toggle-section"
@@ -224,12 +318,12 @@ export default function ConfigPage({ user, onLogout }) {
                 </p>
                 {!modeInfo.binance_keys_configured && (
                   <p className="text-[10px] text-yellow-500 mt-1">
-                    Binance API keys not configured. LIVE mode unavailable.
+                    Binance API keys not configured. Add them in the Exchange Connection section above.
                   </p>
                 )}
                 {modeInfo.binance_keys_configured && !modeInfo.binance_connected && (
                   <p className="text-[10px] text-yellow-500 mt-1">
-                    Binance client not connected. Check API keys.
+                    Binance client not connected. Re-enter your keys above and click "Save &amp; Connect".
                   </p>
                 )}
               </div>

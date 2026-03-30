@@ -327,6 +327,7 @@ async def bot_scan_loop():
                                         continue
                                     quantity = round(adjusted_usdt / signal["price"], 8)
                                     entry_price = signal["price"]
+                                    trade_mode = current_mode  # LIVE or DRY
                                     if is_live:
                                         try:
                                             order_side = "BUY" if signal_side == "LONG" else "SELL"
@@ -335,8 +336,8 @@ async def bot_scan_loop():
                                             entry_price = result["avg_price"]
                                             logger.info(f"LIVE {order_side} {symbol}: order {result['order_id']}, filled {quantity} @ {entry_price}")
                                         except Exception as e:
-                                            logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}")
-                                            continue
+                                            logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}. Recording as DRY.")
+                                            trade_mode = "DRY"  # Fall back to simulated recording
                                     now = datetime.now(timezone.utc).isoformat()
                                     position_doc = {
                                         "id": str(uuid.uuid4()),
@@ -355,7 +356,7 @@ async def bot_scan_loop():
                                         "unrealized_pnl": 0.0,
                                         "unrealized_pnl_percent": 0.0,
                                         "opened_at": now,
-                                        "mode": current_mode,
+                                        "mode": trade_mode,
                                         "indicators": signal["indicators"],
                                         "volume_ratio": signal.get("volume_ratio", 0),
                                         "volatility_regime": signal.get("volatility_regime", "NORMAL"),
@@ -369,7 +370,7 @@ async def bot_scan_loop():
                                         "session": active_session,
                                     }
                                     await db.positions.insert_one(position_doc)
-                                    logger.info(f"[{current_mode}] Opened {signal_side} {symbol} @ {entry_price:.8f}, Conf: {confidence:.3f}, R:R: {conf_breakdown['rr_ratio']}")
+                                    logger.info(f"[{trade_mode}] Opened {signal_side} {symbol} @ {entry_price:.8f}, Conf: {confidence:.3f}, R:R: {conf_breakdown['rr_ratio']}")
                                     break
             state.bot_state["scan_count"] += 1
             state.bot_state["last_scan"] = datetime.now(timezone.utc).isoformat()

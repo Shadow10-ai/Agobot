@@ -9,21 +9,32 @@ from binance import AsyncClient as BinanceAsyncClient
 logger = logging.getLogger(__name__)
 
 
-async def init_binance_client():
-    """Initialize the Binance async client if API keys are available."""
-    if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+async def init_binance_client(api_key: str = None, api_secret: str = None):
+    """Initialize the Binance async client.
+    Priority: passed params > state.binance_keys > env vars
+    """
+    key = api_key or state.binance_keys.get("api_key") or BINANCE_API_KEY
+    secret = api_secret or state.binance_keys.get("api_secret") or BINANCE_API_SECRET
+    if not key or not secret:
         logger.warning("Binance API keys not configured — LIVE mode unavailable")
         return
+    # Close existing client first
+    if state.binance_client:
+        try:
+            await state.binance_client.close_connection()
+        except Exception:
+            pass
+        state.binance_client = None
     try:
         import asyncio
         state.binance_client = await asyncio.wait_for(
-            BinanceAsyncClient.create(
-                api_key=BINANCE_API_KEY,
-                api_secret=BINANCE_API_SECRET
-            ),
+            BinanceAsyncClient.create(api_key=key, api_secret=secret),
             timeout=15.0
         )
-        logger.info("Binance async client initialized")
+        # Cache keys in state for reconnects
+        state.binance_keys["api_key"] = key
+        state.binance_keys["api_secret"] = secret
+        logger.info("Binance async client initialized successfully")
     except asyncio.TimeoutError:
         logger.warning("Binance client init timed out (15s) — DRY mode only")
         state.binance_client = None
