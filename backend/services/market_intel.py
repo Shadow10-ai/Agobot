@@ -3,6 +3,7 @@ import logging
 import random
 from datetime import datetime, timezone, timedelta
 import state
+from config import to_kraken_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ async def analyze_order_book(symbol, limit=100):
     price = state.SYMBOL_PRICES.get(symbol, 0)
     if state.binance_client:
         try:
-            book = await state.binance_client.get_order_book(symbol=symbol, limit=limit)
+            book = await state.binance_client.fetch_order_book(to_kraken_symbol(symbol), limit)
             bids = [(float(b[0]), float(b[1])) for b in book["bids"]]
             asks = [(float(a[0]), float(a[1])) for a in book["asks"]]
         except Exception as e:
@@ -62,7 +63,7 @@ async def analyze_order_book(symbol, limit=100):
         "depth_levels": depth_levels,
         "top_bids": top_bids,
         "top_asks": top_asks,
-        "source": "binance" if state.binance_client else "simulated",
+        "source": "kraken" if state.binance_client else "simulated",
     }
 
 
@@ -85,23 +86,9 @@ def _simulate_order_book(price, limit=100):
 
 
 async def fetch_funding_rates(symbols):
-    """Fetch funding rates from Binance Futures. In DRY mode, simulate."""
+    """Funding rates are perpetual-futures specific. Kraken spot has none — always simulate."""
     results = {}
     for symbol in symbols:
-        if state.binance_client:
-            try:
-                rates = await state.binance_client.futures_funding_rate(symbol=symbol, limit=10)
-                if rates:
-                    current_rate = float(rates[-1]["fundingRate"])
-                    avg_rate = sum(float(r["fundingRate"]) for r in rates) / len(rates)
-                    results[symbol] = {
-                        "current_rate": round(current_rate * 100, 6),
-                        "avg_rate_8h": round(avg_rate * 100, 6),
-                        "source": "binance",
-                    }
-                    continue
-            except Exception:
-                pass
         rate = random.gauss(0.01, 0.02)
         results[symbol] = {
             "current_rate": round(rate, 6),
@@ -141,10 +128,10 @@ async def track_whale_activity(symbols, min_trade_usdt=50000):
         price = state.SYMBOL_PRICES.get(symbol, 0)
         if state.binance_client and price > 0:
             try:
-                agg_trades = await state.binance_client.get_aggregate_trades(symbol=symbol, limit=100)
-                for t in agg_trades:
-                    qty = float(t["q"])
-                    trade_price = float(t["p"])
+                trades = await state.binance_client.fetch_trades(to_kraken_symbol(symbol), limit=100)
+                for t in trades:
+                    qty = float(t["amount"])
+                    trade_price = float(t["price"])
                     usdt_value = qty * trade_price
                     if usdt_value >= min_trade_usdt:
                         whale_trades.append({
@@ -152,9 +139,9 @@ async def track_whale_activity(symbols, min_trade_usdt=50000):
                             "price": trade_price,
                             "quantity": qty,
                             "usdt_value": round(usdt_value, 2),
-                            "side": "SELL" if t["m"] else "BUY",
-                            "time": datetime.fromtimestamp(t["T"] / 1000, tz=timezone.utc).isoformat(),
-                            "source": "binance",
+                            "side": "BUY" if t.get("side") == "buy" else "SELL",
+                            "time": datetime.fromtimestamp(t["timestamp"] / 1000, tz=timezone.utc).isoformat(),
+                            "source": "kraken",
                         })
                 continue
             except Exception:

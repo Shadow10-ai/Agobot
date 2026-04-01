@@ -6,7 +6,7 @@ from database import db
 from models import BotConfigUpdate, TelegramConfig, ModeToggle, ExchangeKeysUpdate
 import state
 from services.bot_loop import get_default_config, start_bot, stop_bot
-from config import BYBIT_API_KEY, BYBIT_API_SECRET
+from config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -86,7 +86,7 @@ async def update_telegram_config(data: TelegramConfig, user=Depends(get_current_
 
 @router.put("/bot/binance-keys")
 async def update_exchange_keys(data: ExchangeKeysUpdate, user=Depends(get_current_user)):
-    """Save Bybit API keys to DB and attempt immediate reconnect."""
+    """Save Kraken API keys to DB and attempt immediate reconnect."""
     await db.bot_config.update_one(
         {"active": True},
         {"$set": {"binance_api_key": data.api_key, "binance_api_secret": data.api_secret}},
@@ -101,7 +101,7 @@ async def update_exchange_keys(data: ExchangeKeysUpdate, user=Depends(get_curren
     return {
         "connected": connected,
         "api_key_preview": key_preview,
-        "message": "Bybit client connected successfully!" if connected else f"Connection failed: {error}",
+        "message": "Kraken client connected successfully!" if connected else f"Connection failed: {error}",
         "error": error if not connected else None,
     }
 
@@ -115,33 +115,33 @@ async def toggle_bot_mode(data: ModeToggle, user=Depends(get_current_user)):
     db_key = config.get("binance_api_key", "")
     db_secret = config.get("binance_api_secret", "")
     # DB keys (set via UI) take priority over env vars
-    effective_key = db_key or BINANCE_API_KEY
-    effective_secret = db_secret or BINANCE_API_SECRET
+    effective_key = db_key or KRAKEN_API_KEY
+    effective_secret = db_secret or KRAKEN_API_SECRET
     if mode == "LIVE":
         if not effective_key or not effective_secret:
             raise HTTPException(
                 status_code=400,
-                detail="Cannot switch to LIVE mode: Bybit API keys are not configured. Add them in Settings."
+                detail="Cannot switch to LIVE mode: Kraken API keys are not configured. Add them in Settings."
             )
-        # Re-attempt Binance client initialization if not connected
+        # Re-attempt Kraken client initialization if not connected
         if not state.binance_client:
             from services.binance_service import init_binance_client
             await init_binance_client(effective_key or None, effective_secret or None)
-            binance_connected = state.binance_client is not None
-            logger.info(f"Binance reconnect on mode switch: {'connected' if binance_connected else 'failed'}")
+            kraken_connected = state.binance_client is not None
+            logger.info(f"Kraken reconnect on mode switch: {'connected' if kraken_connected else 'failed'}")
         else:
-            binance_connected = True
+            kraken_connected = True
     else:
-        binance_connected = state.binance_client is not None
+        kraken_connected = state.binance_client is not None
     await db.bot_config.update_one({"active": True}, {"$set": {"mode": mode}}, upsert=True)
     state.bot_state["mode"] = mode
     logger.info(f"Bot mode switched to {mode} by user {user.get('email', 'unknown')}")
     warning = None
-    if mode == "LIVE" and not binance_connected:
-        warning = "Binance connection unavailable. The bot is set to LIVE — real orders will execute once connected."
+    if mode == "LIVE" and not kraken_connected:
+        warning = "Kraken connection unavailable. The bot is set to LIVE — real orders will execute once connected."
     return {
         "mode": mode,
-        "binance_connected": binance_connected,
+        "binance_connected": kraken_connected,
         "message": f"Bot is now in {mode} mode" + (" — real trades will be executed!" if mode == "LIVE" else " — trades are simulated."),
         "warning": warning,
     }
@@ -157,13 +157,13 @@ async def get_bot_mode(user=Depends(get_current_user)):
     if db_key and db_secret and not state.binance_keys.get("api_key"):
         state.binance_keys["api_key"] = db_key
         state.binance_keys["api_secret"] = db_secret
-    keys_configured = bool(db_key and db_secret) or bool(BINANCE_API_KEY and BINANCE_API_SECRET)
+    keys_configured = bool(db_key and db_secret) or bool(KRAKEN_API_KEY and KRAKEN_API_SECRET)
     # Show DB key preview first (it's what's actively used)
     key_preview = ""
     if db_key:
         key_preview = f"****{db_key[-4:]}"
-    elif BINANCE_API_KEY:
-        key_preview = f"****{BINANCE_API_KEY[-4:]}"
+    elif KRAKEN_API_KEY:
+        key_preview = f"****{KRAKEN_API_KEY[-4:]}"
     return {
         "mode": current_mode,
         "binance_connected": state.binance_client is not None,
@@ -174,11 +174,11 @@ async def get_bot_mode(user=Depends(get_current_user)):
 
 @router.get("/bot/binance-test")
 async def test_exchange_connection(user=Depends(get_current_user)):
-    """Attempt a live Bybit connection and return exact error detail for diagnosis."""
+    """Attempt a live Kraken connection and return exact error detail for diagnosis."""
     import asyncio
     config = await db.bot_config.find_one({"active": True}, {"_id": 0}) or {}
-    key = (config.get("binance_api_key") or BYBIT_API_KEY or state.binance_keys.get("api_key", ""))
-    secret = (config.get("binance_api_secret") or BYBIT_API_SECRET or state.binance_keys.get("api_secret", ""))
+    key = (config.get("binance_api_key") or KRAKEN_API_KEY or state.binance_keys.get("api_key", ""))
+    secret = (config.get("binance_api_secret") or KRAKEN_API_SECRET or state.binance_keys.get("api_secret", ""))
     if not key or not secret:
         return {"connected": False, "error": "No API keys configured. Add them in Settings."}
     from services.binance_service import init_binance_client
@@ -187,7 +187,7 @@ async def test_exchange_connection(user=Depends(get_current_user)):
     return {
         "connected": connected,
         "can_trade": connected,
-        "message": "Connected to Bybit successfully!" if connected else None,
+        "message": "Connected to Kraken successfully!" if connected else None,
         "error": error if not connected else None,
     }
 

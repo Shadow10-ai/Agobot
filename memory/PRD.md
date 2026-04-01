@@ -52,12 +52,12 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 - **Backend service** (srv-d74ps0lm5p6s73fbntt0):
   - Runtime: Docker (Dockerfile in backend/)
   - Health check path: /api/health
-  - Env vars: MONGO_URL, DB_NAME, BINANCE_API_KEY, BINANCE_API_SECRET, JWT_SECRET, PYTHON_VERSION
+  - Env vars: MONGO_URL, DB_NAME, KRAKEN_API_KEY, KRAKEN_API_SECRET, JWT_SECRET
 
 ## Key Technical Stack
 - **Backend**: FastAPI, MongoDB Atlas (Motor async), asyncio background loops
 - **ML**: LightGBM binary classifier (WIN/LOSS prediction), scikit-learn, pandas
-- **Trading**: Binance API (python-binance), DRY/LIVE mode toggle
+- **Trading**: Kraken via ccxt (v4.5.46), DRY/LIVE mode toggle
 - **Risk**: Monte Carlo simulation, Circuit breakers, Market Regime Detection
 - **Frontend**: React 19, TailwindCSS, Recharts
 
@@ -91,8 +91,9 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 - [2026-03] MongoDB Atlas connected
 - [2026-03] Login fix: graceful hashed_password/password_hash fallback
 - [2026-03] Binance API key management UI in Config page (PUT /api/bot/binance-keys)
-- [2026-03] Bot LIVE trade fallback: failed live orders now fall back to DRY recording
-- [2026-03] Code review fixes: hardcoded test credentials → env vars, console.error removed (6 files), array index keys → stable keys (MarketIntelPage, LeaderboardPage, BacktesterPage, ComparePage), server_legacy.py deleted, TradesPage PAGE_LIMIT extracted as module constant, BacktesterPage unused catch var fixed
+- [2026-04] Migrated exchange from Binance/Bybit → Kraken via ccxt (bypasses Render US IP blocks permanently)
+- [2026-04] Removed BNB from all symbol lists (not on Kraken), added symbol converter to_kraken_symbol()
+- [2026-04] Fixed BINANCE_API_KEY undefined variable bug in bot_routes.py
 
 ## Render Deployment Lessons Learned
 1. packageManager field in package.json blocks npm on Render → removed

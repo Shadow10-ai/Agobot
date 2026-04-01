@@ -35,7 +35,7 @@ async def get_dashboard(user=Depends(get_current_user)):
     total_pnl_result = await db.trades.aggregate(pipeline).to_list(1)
     total_pnl = total_pnl_result[0]["total"] if total_pnl_result else 0.0
     config = await db.bot_config.find_one({"active": True}, {"_id": 0})
-    symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT']) if config else ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+    symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT']) if config else ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT']
     prices = {s: state.SYMBOL_PRICES.get(s, 0) for s in symbols}
     return {
         "balance": round(balance, 2),

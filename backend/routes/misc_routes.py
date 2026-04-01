@@ -10,7 +10,7 @@ router = APIRouter()
 @router.get("/prices")
 async def get_prices(user=Depends(get_current_user)):
     config = await db.bot_config.find_one({"active": True}, {"_id": 0})
-    symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT']) if config else ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT']
+    symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT']) if config else ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT']
     return {s: state.SYMBOL_PRICES.get(s, 0) for s in symbols}
 
 

@@ -95,7 +95,7 @@ export default function TradesPage({ user, onLogout }) {
               className="h-9 pl-9 pr-8 rounded-sm bg-[#121212] border border-[#27272A] text-sm text-zinc-300 appearance-none focus:outline-none focus:border-blue-500 transition-colors"
             >
               <option value="">All Symbols</option>
-              {["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT"].map((s) => (
+              {["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT"].map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>

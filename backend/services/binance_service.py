@@ -1,166 +1,142 @@
-"""Exchange client management using Bybit (pybit). Keeps original function names for compatibility."""
+"""Exchange client management using Kraken via ccxt. Function names kept for compatibility."""
 import asyncio
 import logging
 import random
-import time
 from datetime import datetime, timezone, timedelta
-from functools import partial
 import state
-from config import BYBIT_API_KEY, BYBIT_API_SECRET
+from config import KRAKEN_API_KEY, KRAKEN_API_SECRET, to_kraken_symbol
 
 logger = logging.getLogger(__name__)
 
-# Bybit interval mapping: our internal format → Bybit V5 format
-_INTERVAL_MAP = {"1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30",
-                 "1h": "60", "2h": "120", "4h": "240", "1d": "D"}
-
-
-def _get_bybit_client():
-    """Return the cached Bybit HTTP client from state."""
-    return state.binance_client  # variable kept as-is for minimal code changes
-
-
-async def _run_sync(func, *args, **kwargs):
-    """Run a synchronous Bybit call in the default thread pool executor."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, partial(func, *args, **kwargs))
-
-
-def _init_bybit_sync(key: str, secret: str):
-    """Synchronous Bybit client init — called from thread pool."""
-    from pybit.unified_trading import HTTP
-    client = HTTP(testnet=False, api_key=key, api_secret=secret)
-    # Verify keys with a lightweight authenticated call
-    resp = client.get_wallet_balance(accountType="UNIFIED")
-    if resp.get("retCode") != 0:
-        raise Exception(resp.get("retMsg", "Unknown Bybit error"))
-    return client
+# Kraken-supported timeframe mapping (3m not available → 5m)
+_TF_MAP = {
+    "1m": "1m", "3m": "5m", "5m": "5m",
+    "15m": "15m", "30m": "30m", "1h": "1h",
+    "2h": "2h", "4h": "4h", "1d": "1d",
+}
 
 
 async def init_binance_client(api_key: str = None, api_secret: str = None):
-    """Initialize the Bybit HTTP client. Returns error string on failure, None on success."""
-    key = api_key or state.binance_keys.get("api_key") or BYBIT_API_KEY
-    secret = api_secret or state.binance_keys.get("api_secret") or BYBIT_API_SECRET
+    """Initialize the Kraken ccxt client. Returns error string on failure, None on success."""
+    import ccxt.async_support as ccxt
+
+    key = api_key or state.binance_keys.get("api_key") or KRAKEN_API_KEY
+    secret = api_secret or state.binance_keys.get("api_secret") or KRAKEN_API_SECRET
     if not key or not secret:
-        logger.warning("Bybit API keys not configured — LIVE mode unavailable")
+        logger.warning("Kraken API keys not configured — LIVE mode unavailable")
         return "No API keys configured."
-    # Close existing client
-    state.binance_client = None
+
+    # Close existing client if any
+    await close_binance_client()
+
     try:
-        client = await asyncio.wait_for(
-            _run_sync(_init_bybit_sync, key, secret),
-            timeout=20.0
-        )
-        state.binance_client = client
+        exchange = ccxt.kraken({
+            "apiKey": key,
+            "secret": secret,
+            "enableRateLimit": True,
+        })
+        # Lightweight auth test — fetch balance
+        await asyncio.wait_for(exchange.fetch_balance(), timeout=20.0)
+        state.binance_client = exchange
         state.binance_keys["api_key"] = key
         state.binance_keys["api_secret"] = secret
-        logger.info("Bybit client initialized successfully")
+        logger.info("Kraken client initialized successfully")
         return None  # success
     except asyncio.TimeoutError:
-        logger.warning("Bybit client init timed out (20s) — DRY mode only")
+        logger.warning("Kraken client init timed out (20s)")
+        try:
+            await exchange.close()
+        except Exception:
+            pass
         state.binance_client = None
-        return "Connection timed out. Bybit may be unreachable from this server."
+        return "Connection timed out. Kraken may be unreachable from this server."
     except Exception as e:
         err = str(e)
-        logger.error(f"Failed to initialize Bybit client: {err}")
+        logger.error(f"Failed to initialize Kraken client: {err}")
+        try:
+            await exchange.close()
+        except Exception:
+            pass
         state.binance_client = None
-        # Translate common Bybit errors
-        if "invalid api_key" in err.lower() or "10003" in err:
+        err_lower = err.lower()
+        if "invalid key" in err_lower or "apikey" in err_lower or "api key" in err_lower:
             return "Invalid API key — double-check you copied the full key correctly."
-        if "invalid sign" in err.lower() or "signature" in err.lower() or "10004" in err:
+        if "invalid signature" in err_lower or "signature" in err_lower:
             return "Invalid signature — your API Secret is wrong. Copy it again exactly."
-        if "ip" in err.lower() and ("restrict" in err.lower() or "not allow" in err.lower()):
-            return "IP restriction — set IP access to 'No Restriction' on Bybit API Management."
-        if "permission" in err.lower() or "10005" in err:
-            return "Permission denied — enable 'Unified Trading' permissions on the key."
-        return err
+        if "permission" in err_lower or "nonce" in err_lower:
+            return "Permission denied — ensure 'Create & Modify Orders' is enabled on the key."
+        if "ip" in err_lower and ("restrict" in err_lower or "not allow" in err_lower):
+            return "IP restriction — leave IP whitelist blank on Kraken API Management."
+        return f"Kraken error: {err}"
 
 
 async def close_binance_client():
-    """Close the Bybit client (no persistent connection needed for HTTP)."""
-    state.binance_client = None
-    logger.info("Bybit client cleared")
+    """Close the Kraken ccxt client and release the HTTP session."""
+    if state.binance_client is not None:
+        try:
+            await state.binance_client.close()
+        except Exception:
+            pass
+        state.binance_client = None
+    logger.info("Kraken client closed")
 
 
 async def fetch_live_price(symbol: str) -> float:
-    """Fetch real-time price from Bybit."""
-    client = _get_bybit_client()
-    if not client:
-        raise RuntimeError("Bybit client not initialized")
-
-    def _get_price():
-        resp = client.get_tickers(category="spot", symbol=symbol)
-        if resp.get("retCode") != 0:
-            raise Exception(resp.get("retMsg"))
-        return float(resp["result"]["list"][0]["lastPrice"])
-
-    return await _run_sync(_get_price)
+    """Fetch real-time price from Kraken."""
+    exchange = state.binance_client
+    if not exchange:
+        raise RuntimeError("Kraken client not initialized")
+    ticker = await exchange.fetch_ticker(to_kraken_symbol(symbol))
+    return float(ticker["last"])
 
 
-async def fetch_live_candles(symbol: str, interval: str = "3m", limit: int = 60):
-    """Fetch real kline candles from Bybit and return in internal format."""
-    client = _get_bybit_client()
-    if not client:
-        raise RuntimeError("Bybit client not initialized")
-    bybit_interval = _INTERVAL_MAP.get(interval, interval.replace("m", "").replace("h", "0"))
-
-    def _get_klines():
-        resp = client.get_kline(category="spot", symbol=symbol, interval=bybit_interval, limit=limit)
-        if resp.get("retCode") != 0:
-            raise Exception(resp.get("retMsg"))
-        # Bybit returns newest-first — reverse to oldest-first
-        raw = list(reversed(resp["result"]["list"]))
-        return [
-            {
-                "open": float(k[1]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-                "volume": float(k[5]),
-                "time": int(k[0])
-            }
-            for k in raw
-        ]
-
-    return await _run_sync(_get_klines)
+async def fetch_live_candles(symbol: str, interval: str = "5m", limit: int = 60):
+    """Fetch real OHLCV candles from Kraken and return in internal format."""
+    exchange = state.binance_client
+    if not exchange:
+        raise RuntimeError("Kraken client not initialized")
+    tf = _TF_MAP.get(interval, "5m")
+    ohlcv = await exchange.fetch_ohlcv(to_kraken_symbol(symbol), tf, limit=limit)
+    # ccxt returns oldest-first: [[timestamp_ms, open, high, low, close, volume], ...]
+    return [
+        {
+            "open": float(c[1]),
+            "high": float(c[2]),
+            "low": float(c[3]),
+            "close": float(c[4]),
+            "volume": float(c[5]),
+            "time": int(c[0]),
+        }
+        for c in ohlcv
+    ]
 
 
 async def place_live_market_order(symbol: str, side: str, quote_qty: float):
-    """Place a real market order on Bybit spot. Returns order result dict."""
-    client = _get_bybit_client()
-    if not client:
-        raise RuntimeError("Bybit client not initialized")
-    bybit_side = "Buy" if side.upper() in ("BUY", "LONG") else "Sell"
+    """Place a real market order on Kraken spot. Returns order result dict.
 
-    def _place_and_confirm():
-        # Place market order with USDT quantity
-        resp = client.place_order(
-            category="spot",
-            symbol=symbol,
-            side=bybit_side,
-            orderType="Market",
-            qty=str(round(quote_qty, 2)),
-            marketUnit="quoteCoin"
-        )
-        if resp.get("retCode") != 0:
-            raise Exception(f"Order rejected: {resp.get('retMsg')}")
-        order_id = resp["result"]["orderId"]
-        # Brief wait for fill then fetch details
-        time.sleep(0.8)
-        history = client.get_order_history(category="spot", symbol=symbol, orderId=order_id)
-        if history.get("retCode") == 0 and history["result"]["list"]:
-            o = history["result"]["list"][0]
-            exec_qty = float(o.get("cumExecQty") or 0)
-            avg_price = float(o.get("avgPrice") or 0)
-            return {
-                "order_id": order_id,
-                "status": o.get("orderStatus", "Filled"),
-                "executed_qty": exec_qty,
-                "avg_price": avg_price,
-            }
-        return {"order_id": order_id, "status": "placed", "executed_qty": 0, "avg_price": 0}
-
-    return await _run_sync(_place_and_confirm)
+    `quote_qty` is in USDT. Kraken needs base-currency amount, so we fetch
+    the current price and convert.
+    """
+    exchange = state.binance_client
+    if not exchange:
+        raise RuntimeError("Kraken client not initialized")
+    kraken_symbol = to_kraken_symbol(symbol)
+    # Get current price to convert USDT → base currency amount
+    ticker = await exchange.fetch_ticker(kraken_symbol)
+    price = float(ticker["last"])
+    if price <= 0:
+        raise ValueError(f"Invalid price ({price}) for {symbol}")
+    amount_base = quote_qty / price
+    if side.upper() in ("BUY", "LONG"):
+        order = await exchange.create_market_buy_order(kraken_symbol, amount_base)
+    else:
+        order = await exchange.create_market_sell_order(kraken_symbol, amount_base)
+    return {
+        "order_id": str(order.get("id", "")),
+        "status": order.get("status", "closed"),
+        "executed_qty": float(order.get("filled") or amount_base),
+        "avg_price": float(order.get("average") or price),
+    }
 
 
 def generate_candles(symbol, count=60):

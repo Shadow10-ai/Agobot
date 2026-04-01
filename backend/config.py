@@ -11,19 +11,25 @@ SECRET_KEY = os.environ.get('JWT_SECRET', 'cr7pt0-b0t-s3cr3t-k3y-2026')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 
-# Bybit (primary exchange)
-BYBIT_API_KEY = os.environ.get('BYBIT_API_KEY', '')
-BYBIT_API_SECRET = os.environ.get('BYBIT_API_SECRET', '')
+# Kraken (primary exchange via ccxt)
+KRAKEN_API_KEY = os.environ.get('KRAKEN_API_KEY', '')
+KRAKEN_API_SECRET = os.environ.get('KRAKEN_API_SECRET', '')
 
-# Valid trading symbols
-VALID_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT']
+# Valid trading symbols (Kraken does not list BNB)
+VALID_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT']
 
-# Correlation groups for crypto
+
+def to_kraken_symbol(symbol: str) -> str:
+    """Convert internal symbol format to ccxt/Kraken format. BTCUSDT → BTC/USDT"""
+    if symbol.endswith('USDT'):
+        return symbol[:-4] + '/USDT'
+    return symbol
+
+# Correlation groups for crypto (BNB removed — not listed on Kraken)
 CORRELATION_GROUPS = {
     "BTC_ECOSYSTEM": ["BTCUSDT"],
     "ETH_ECOSYSTEM": ["ETHUSDT"],
     "ALT_LAYER1": ["SOLUSDT", "AVAXUSDT", "ADAUSDT"],
-    "EXCHANGE": ["BNBUSDT"],
     "MEME": ["DOGEUSDT"],
     "PAYMENT": ["XRPUSDT"],
 }

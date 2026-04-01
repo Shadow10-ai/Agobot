@@ -36,7 +36,7 @@ import {
 import { toast } from "sonner";
 
 const SYMBOLS = [
-  "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT",
+  "BTCUSDT", "ETHUSDT", "SOLUSDT",
   "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT",
 ];
 

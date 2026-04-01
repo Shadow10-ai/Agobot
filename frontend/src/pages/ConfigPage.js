@@ -247,7 +247,7 @@ export default function ConfigPage({ user, onLogout }) {
         >
           <div className="flex items-center gap-2 mb-4">
             <Key className="w-4 h-4 text-yellow-400" />
-            <h3 className="text-sm font-semibold">Bybit API Connection</h3>
+            <h3 className="text-sm font-semibold">Kraken API Connection</h3>
             <span
               data-testid="binance-connection-badge"
               className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider flex items-center gap-1 ${
@@ -272,7 +272,7 @@ export default function ConfigPage({ user, onLogout }) {
                 type="password"
                 value={binanceKeys.api_key}
                 onChange={(e) => setBinanceKeys((prev) => ({ ...prev, api_key: e.target.value }))}
-                placeholder={modeInfo.api_key_preview ? `Current: ${modeInfo.api_key_preview}` : "Paste your Bybit API key"}
+                placeholder={modeInfo.api_key_preview ? `Current: ${modeInfo.api_key_preview}` : "Paste your Kraken API key"}
                 className="w-full h-9 px-3 rounded-sm bg-[#0A0A0A] border border-[#27272A] text-sm font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
               />
             </div>
@@ -283,7 +283,7 @@ export default function ConfigPage({ user, onLogout }) {
                 type="password"
                 value={binanceKeys.api_secret}
                 onChange={(e) => setBinanceKeys((prev) => ({ ...prev, api_secret: e.target.value }))}
-                placeholder="Paste your Bybit API secret"
+                placeholder="Paste your Kraken API secret (Private Key)"
                 className="w-full h-9 px-3 rounded-sm bg-[#0A0A0A] border border-[#27272A] text-sm font-mono text-white placeholder:text-zinc-600 focus:outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500/20 transition-colors"
               />
             </div>
@@ -291,8 +291,8 @@ export default function ConfigPage({ user, onLogout }) {
 
           <div className="flex items-center justify-between">
             <p className="text-[10px] text-zinc-600 max-w-xs leading-relaxed">
-              Keys are stored securely in your database. Enable <strong className="text-zinc-400">Unified Trading</strong> permissions on your Bybit API key. Set IP restriction to <strong className="text-yellow-500/80">"No Restriction"</strong> for cloud hosting.
-              <a href="https://www.bybit.com/app/user/api-management" target="_blank" rel="noopener noreferrer" className="text-yellow-500/70 ml-1 hover:text-yellow-400">Manage API keys →</a>
+              Keys are stored securely in your database. Enable <strong className="text-zinc-400">Create &amp; Modify Orders</strong> permission on your Kraken API key. Leave IP whitelist <strong className="text-yellow-500/80">blank (unrestricted)</strong> for cloud hosting.
+              <a href="https://www.kraken.com/u/security/api" target="_blank" rel="noopener noreferrer" className="text-yellow-500/70 ml-1 hover:text-yellow-400">Manage API keys →</a>
             </p>
             <div className="flex gap-2 flex-shrink-0">
               {modeInfo.binance_keys_configured && (
@@ -367,17 +367,17 @@ export default function ConfigPage({ user, onLogout }) {
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-0.5">
                   {isLive
-                    ? "LIVE MODE — Real orders are being placed on Binance with real funds."
+                    ? "LIVE MODE — Real orders are being placed on Kraken with real funds."
                     : "DRY MODE — All trades are simulated. No real funds are used."}
                 </p>
                 {!modeInfo.binance_keys_configured && (
                   <p className="text-[10px] text-yellow-500 mt-1">
-                    Binance API keys not configured. Add them in the Exchange Connection section above.
+                    Kraken API keys not configured. Add them in the Exchange Connection section above.
                   </p>
                 )}
                 {modeInfo.binance_keys_configured && !modeInfo.binance_connected && (
                   <p className="text-[10px] text-yellow-500 mt-1">
-                    Bybit client not connected. Re-enter your keys above and click "Save &amp; Connect".
+                    Kraken client not connected. Re-enter your keys above and click "Save &amp; Connect".
                   </p>
                 )}
               </div>
@@ -427,7 +427,7 @@ export default function ConfigPage({ user, onLogout }) {
               <div className="space-y-2 mb-5 p-3 bg-red-500/5 rounded border border-red-500/10">
                 <p className="text-xs text-zinc-300 leading-relaxed">
                   <strong className="text-red-400">Warning:</strong> Switching to LIVE mode will cause AgoBot to place{" "}
-                  <strong className="text-white">real buy and sell orders</strong> on Binance using your API keys.
+                  <strong className="text-white">real buy and sell orders</strong> on Kraken using your API keys.
                 </p>
                 <ul className="text-[11px] text-zinc-400 space-y-1 ml-3 list-disc">
                   <li>Real USDT will be spent on trades</li>
@@ -711,7 +711,7 @@ export default function ConfigPage({ user, onLogout }) {
         <div className="bg-[#121212] border border-white/5 rounded-lg p-6" data-testid="symbols-config">
           <h3 className="text-sm font-semibold mb-4">Active Trading Symbols</h3>
           <div className="flex flex-wrap gap-2">
-            {["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT"].map((symbol) => {
+            {["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT"].map((symbol) => {
               const isActive = config?.symbols?.includes(symbol);
               return (
                 <button

@@ -25,7 +25,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 
-const SYMBOLS = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","AVAXUSDT"];
+const SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","AVAXUSDT"];
 
 const PRESETS = {
   conservative: {

@@ -3,7 +3,7 @@ from config import VALID_SYMBOLS
 
 # Simulated price data (mutable dict — contents updated, not reassigned)
 SYMBOL_PRICES = {
-    'BTCUSDT': 97500.0, 'ETHUSDT': 3450.0, 'BNBUSDT': 680.0, 'SOLUSDT': 185.0,
+    'BTCUSDT': 97500.0, 'ETHUSDT': 3450.0, 'SOLUSDT': 185.0,
     'XRPUSDT': 2.35, 'ADAUSDT': 0.85, 'DOGEUSDT': 0.32, 'AVAXUSDT': 38.5
 }
 

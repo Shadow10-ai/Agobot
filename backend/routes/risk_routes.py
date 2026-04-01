@@ -67,7 +67,7 @@ async def get_monte_carlo(
 @router.get("/risk/regime")
 async def get_market_regime(user=Depends(get_current_user)):
     config = await db.bot_config.find_one({"active": True}, {"_id": 0})
-    symbols = config.get("symbols", ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]) if config else ["BTCUSDT"]
+    symbols = config.get("symbols", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]) if config else ["BTCUSDT"]
     regimes = {}
     for symbol in symbols:
         candles = generate_candles(symbol, 60)

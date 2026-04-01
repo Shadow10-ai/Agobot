@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 async def get_default_config():
     config = {
         "active": True,
-        "symbols": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"],
+        "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"],
         "base_usdt_per_trade": 50.0,
         "risk_per_trade_percent": 0.5,
         "max_daily_loss_usdt": 20.0,
@@ -68,7 +68,7 @@ async def bot_scan_loop():
             current_mode = config.get("mode", "DRY")
             state.bot_state["mode"] = current_mode
             is_live = current_mode == "LIVE" and state.binance_client is not None
-            symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT'])
+            symbols = config.get("symbols", ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'])
             min_prob = config.get("min_entry_probability", 0.65)
             base_usdt = config.get("base_usdt_per_trade", 50)
             allow_short = config.get("allow_short", False)
