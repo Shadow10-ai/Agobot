@@ -200,7 +200,7 @@ export default function MarketIntelPage({ user, onLogout }) {
             <div className="flex items-center gap-2 mb-4">
               <DollarSign className="w-4 h-4 text-yellow-400" />
               <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Funding Rates</h3>
-              {fundingRates?.has_opportunities && (
+              {(fundingRates?.arb_opportunities > 0) && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 font-medium animate-pulse">
                   ARB OPPORTUNITY
                 </span>
