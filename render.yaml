@@ -16,9 +16,9 @@ services:
         value: agobot_prod
       - key: JWT_SECRET
         generateValue: true
-      - key: BYBIT_API_KEY
+      - key: KRAKEN_API_KEY
         sync: false
-      - key: BYBIT_API_SECRET
+      - key: KRAKEN_API_SECRET
         sync: false
       - key: PYTHON_VERSION
         value: "3.11.0"

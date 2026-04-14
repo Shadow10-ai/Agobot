@@ -1,139 +1,91 @@
-# AgoBot — Railway Deployment Guide
+# AgoBot — Render Deployment Guide
 
-## Overview
-AgoBot deploys as **3 services** on Railway:
-1. **Backend** — FastAPI + ML (Python)
-2. **Frontend** — React (served via nginx)
-3. **MongoDB** — Railway managed database plugin
+## Current Status
+- **Frontend**: Live at https://agobot-frontend.onrender.com ✅
+- **Backend**: Needs to be created on Render dashboard ← do this now
 
 ---
 
 ## Step 1: Push Code to GitHub
-
-In the Emergent chat, click **"Save to Github"** to push your code to a GitHub repo (if not already done).
-
----
-
-## Step 2: Create Railway Project
-
-1. Go to [railway.app](https://railway.app) → **New Project**
-2. Choose **Deploy from GitHub repo** → select your AgoBot repository
+In the Emergent chat, click **"Save to Github"** to push all recent changes (Kraken migration).
 
 ---
 
-## Step 3: Add MongoDB Database
+## Step 2: Create the Backend Service on Render
 
-1. In your Railway project canvas, click **"+ New"**
-2. Select **Database → Add MongoDB**
-3. Railway auto-creates a MongoDB instance and exposes `MONGO_URL` and `MONGOHOST` etc.
-4. Click the MongoDB service → **Variables** tab → copy the `MONGO_URL` value (you'll need it for backend)
-
-> **Alternative**: Use MongoDB Atlas (free tier) at [cloud.mongodb.com](https://cloud.mongodb.com). Create a cluster, get the connection string, and use that as `MONGO_URL`.
+1. Go to [dashboard.render.com](https://dashboard.render.com)
+2. Click **"New +"** → **"Web Service"**
+3. Connect your **GitHub repository** (the AgoBot repo)
+4. Configure:
+   - **Name**: `agobot-backend`
+   - **Region**: `Frankfurt (EU Central)` ← important, avoids US geo-blocks
+   - **Root Directory**: `backend`
+   - **Runtime**: `Python 3`
+   - **Build Command**: `pip install -r requirements.prod.txt`
+   - **Start Command**: `uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1`
+   - **Plan**: Free
 
 ---
 
-## Step 4: Configure the Backend Service
+## Step 3: Set Backend Environment Variables
 
-Railway will auto-detect the root `/` of your repo. You need to point it to `/backend`:
+In the Render dashboard for `agobot-backend`, go to **Environment** tab and add:
 
-1. Click your main service → **Settings** → **Source** → set **Root Directory** to `backend`
-2. Railway will now use `backend/Dockerfile` automatically
+| Variable | Value |
+|---|---|
+| `MONGO_URL` | Your MongoDB Atlas connection string |
+| `DB_NAME` | `agobot_prod` |
+| `JWT_SECRET` | Any long random string (e.g. `agobot-super-secret-2026`) |
+| `KRAKEN_API_KEY` | `xihFxbOY4/uZSRUGre1GGeZD3GxdSn8y0QrUJ9Xzf96j3l3/T4nSK5+t` |
+| `KRAKEN_API_SECRET` | `WdJSPv+fCPv/tUFGbpZOiZa0f9tFoggd9WqiQGM1KVm515ZdDJe6TFbzkuPHmIjCPr9xUYSTHIyBVu2iwsztYQ==` |
 
-### Set Backend Environment Variables
+> ⚠️ Mark `KRAKEN_API_KEY`, `KRAKEN_API_SECRET`, and `MONGO_URL` as **Secret** in Render.
 
-Go to your backend service → **Variables** tab → add:
+Click **"Create Web Service"** — Render will build and deploy automatically.
 
-| Variable | Value | Notes |
-|---|---|---|
-| `MONGO_URL` | `mongodb://...` | From Railway MongoDB plugin or Atlas |
-| `DB_NAME` | `agobot_prod` | Your database name |
-| `JWT_SECRET` | *(generate below)* | Must be strong random string |
-| `BINANCE_API_KEY` | *(your Binance key)* | From Binance API Management |
-| `BINANCE_API_SECRET` | *(your Binance secret)* | Mark as **Secret** in Railway |
-| `PORT` | `8001` | Railway may override this automatically |
+---
 
-**Generate a strong JWT_SECRET:**
+## Step 4: Get the Backend URL
+
+Once the backend is running, Render assigns it a URL:
+- Default: `https://agobot-backend.onrender.com`
+- Or check the service page for the exact URL
+
+---
+
+## Step 5: Verify Deployment
+
 ```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
----
-
-## Step 5: Deploy the Frontend Service
-
-1. In Railway canvas, click **"+ New"** → **GitHub Repo** → same repo → click **Add Service**
-2. Set **Root Directory** to `frontend`
-3. Railway will use `frontend/Dockerfile`
-
-### Set Frontend Environment Variables
-
-Go to the frontend service → **Variables** tab → add:
-
-| Variable | Value | Notes |
-|---|---|---|
-| `REACT_APP_BACKEND_URL` | *(set after backend is live)* | The backend's public Railway URL |
-
----
-
-## Step 6: Get Backend Public URL & Link Frontend
-
-1. Deploy the backend first (click **Deploy** on the backend service)
-2. Once running, go to backend service → **Settings** → **Networking** → **Generate Domain**
-3. Copy the domain (e.g. `https://agobot-backend.up.railway.app`)
-4. Go to the **frontend service** → Variables → set:
-   ```
-   REACT_APP_BACKEND_URL=https://agobot-backend.up.railway.app
-   ```
-5. Redeploy the frontend (variables are baked into the React build)
-
----
-
-## Step 7: Generate Frontend Domain
-
-1. Go to frontend service → **Settings** → **Networking** → **Generate Domain**
-2. Your app will be live at e.g. `https://agobot-frontend.up.railway.app`
-
----
-
-## Step 8: Verify Deployment
-
-1. Open the frontend URL in your browser
-2. Register/login
-3. Dashboard should show bot scanning
-4. Go to Config → toggle to **LIVE mode** — Binance should now connect (no geo-restriction on Railway IPs)
-
-### Quick API Health Check
-```bash
-curl https://agobot-backend.up.railway.app/api/health
+curl https://agobot-backend.onrender.com/api/health
 # Expected: {"status": "healthy", "database": "connected"}
 ```
 
 ---
 
-## Environment Variables Summary
+## Step 6: Link Frontend to Backend (if needed)
 
-### Backend (required)
-```env
-MONGO_URL=mongodb://...
-DB_NAME=agobot_prod
-JWT_SECRET=<strong-random-string>
-BINANCE_API_KEY=<your-key>
-BINANCE_API_SECRET=<your-secret>
-```
+If the frontend isn't showing data:
+1. Go to `agobot-frontend` service on Render → **Environment**
+2. Confirm `REACT_APP_BACKEND_URL` = `https://agobot-backend.onrender.com`
+3. Trigger a **Manual Deploy** on the frontend
 
-### Frontend (required)
-```env
-REACT_APP_BACKEND_URL=https://<your-backend>.up.railway.app
-```
+---
+
+## Step 7: Switch to LIVE Mode
+
+1. Open https://agobot-frontend.onrender.com
+2. Log in → go to **Configuration**
+3. Your Kraken keys are already saved in the database
+4. Click the **LIVE** toggle — the bot will start real trading on Kraken
 
 ---
 
 ## Important Notes
 
-- **Single worker**: The backend uses `--workers 1` — this is intentional. The bot loop holds in-memory state (`bot_state`, `ml_model_state`, `_circuit_breaker`) that must not be split across multiple worker processes.
-- **ML training**: LightGBM model trains automatically after 5 labeled trades. Railway's servers have no geo-restrictions, so full Binance live data and ML functionality will work.
-- **LIVE mode**: Will work on Railway because IP is not geo-restricted by Binance.
-- **Persistent storage**: ML model (`ml_model.joblib`) is saved to disk. On Railway, this resets on redeployment. The model retrains automatically from MongoDB data on startup, so this is not a problem.
+- **Single worker**: `--workers 1` is intentional — the bot holds in-memory state
+- **DRY mode first**: Run in DRY mode for a few hours to confirm the bot is trading correctly before switching LIVE
+- **Frankfurt region**: Kraken is accessible from Render Frankfurt. No geo-blocking.
+- **ML retraining**: The LightGBM model retrains automatically from MongoDB data on startup after 30+ labeled trades
 
 ---
 
@@ -141,8 +93,8 @@ REACT_APP_BACKEND_URL=https://<your-backend>.up.railway.app
 
 | Issue | Fix |
 |---|---|
-| Frontend shows blank page | Ensure `REACT_APP_BACKEND_URL` is set and doesn't have a trailing slash |
-| `Cannot connect to MongoDB` | Check `MONGO_URL` format — must use `mongodb+srv://` for Atlas or plain `mongodb://` for Railway plugin |
-| Binance connection fails | Check `BINANCE_API_KEY` / `BINANCE_API_SECRET` are set and not restricted to specific IPs in Binance settings |
-| Bot not scanning | Check backend logs in Railway dashboard for errors |
-| ML model not training | Need at least 30 labeled trades — run in DRY mode for a few hours first |
+| Frontend shows blank / no data | Check `REACT_APP_BACKEND_URL` is set correctly on the frontend service |
+| `Cannot connect to MongoDB` | Check `MONGO_URL` — must start with `mongodb+srv://` for Atlas |
+| Kraken connection fails | Check `KRAKEN_API_KEY` and `KRAKEN_API_SECRET` are set correctly |
+| Bot not scanning | Check backend logs in Render dashboard for startup errors |
+| Health check failing | Ensure start command includes `--host 0.0.0.0` |

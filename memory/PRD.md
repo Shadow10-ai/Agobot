@@ -54,7 +54,11 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
   - Health check path: /api/health
   - Env vars: MONGO_URL, DB_NAME, KRAKEN_API_KEY, KRAKEN_API_SECRET, JWT_SECRET
 
-## Key Technical Stack
+## Exchange Integration
+- **Exchange**: Kraken (via ccxt v4.5.46)
+- **Region**: Frankfurt (EU) — no geo-restrictions
+- **Key preview**: ****K5+t (stored in MongoDB, overrides env vars)
+- **Status**: CONNECTED ✅
 - **Backend**: FastAPI, MongoDB Atlas (Motor async), asyncio background loops
 - **ML**: LightGBM binary classifier (WIN/LOSS prediction), scikit-learn, pandas
 - **Trading**: Kraken via ccxt (v4.5.46), DRY/LIVE mode toggle
