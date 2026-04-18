@@ -36,6 +36,8 @@ def volatility_regime(candles, period=14, lookback=100):
     current_atr = atr_values[-1] if atr_values else 0
     sorted_atrs = sorted(atr_values)
     percentile = sorted_atrs.index(min(sorted_atrs, key=lambda x: abs(x - current_atr))) / len(sorted_atrs) * 100
+    regime = "NORMAL"
+    size_mult = 1.0
     if percentile >= 80:
         regime = "HIGH_VOL"
         size_mult = 0.5

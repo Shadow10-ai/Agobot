@@ -166,6 +166,7 @@ async def track_whale_activity(symbols, min_trade_usdt=50000):
     buy_count = sum(1 for t in whale_trades if t["side"] == "BUY")
     sell_count = sum(1 for t in whale_trades if t["side"] == "SELL")
     net_flow = total_buy - total_sell
+    whale_signal = "NEUTRAL"
     if net_flow > 100000:
         whale_signal = "ACCUMULATION"
     elif net_flow < -100000:
