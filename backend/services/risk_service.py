@@ -80,6 +80,8 @@ def detect_market_regime_advanced(candles):
     vol_expansion = vol_recent / vol_avg if vol_avg > 0 else 1.0
     bb_std = np.std(closes[-20:])
     bb_bandwidth = (bb_std / price_mean * 100) if price_mean > 0 else 0
+    regime = "RANGING"
+    strength = 0.5
     if atr_pct > 2.0 and vol_expansion > 1.5:
         regime = "VOLATILE"
         strength = min(1.0, atr_pct / 3.0)

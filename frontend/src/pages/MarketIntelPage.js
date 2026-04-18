@@ -56,8 +56,8 @@ export default function MarketIntelPage({ user, onLogout }) {
       setOrderFlow(ofRes.data);
       setFundingRates(frRes.data);
       setWhaleActivity(waRes.data);
-    } catch {
-      // silently swallow — UI shows stale data or empty state
+    } catch (err) {
+      console.error('Market intel fetch failed:', err?.message || err);
     } finally {
       setLoading(false);
     }

@@ -131,8 +131,8 @@ export default function LeaderboardPage({ user, onLogout }) {
     try {
       const res = await api.get("/leaderboard");
       setData(res.data);
-    } catch {
-      // silently swallow — UI shows stale data or empty state
+    } catch (err) {
+      console.error('Leaderboard fetch failed:', err?.message || err);
     } finally {
       setLoading(false);
     }

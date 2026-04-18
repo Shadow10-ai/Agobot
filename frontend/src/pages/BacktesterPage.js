@@ -139,8 +139,8 @@ export default function BacktesterPage({ user, onLogout }) {
     try {
       const res = await api.get("/backtests");
       setHistory(res.data || []);
-    } catch {
-      // ignore — history is non-critical
+    } catch (err) {
+      console.error('Backtest history fetch failed:', err?.message || err);
     }
   }, []);
 

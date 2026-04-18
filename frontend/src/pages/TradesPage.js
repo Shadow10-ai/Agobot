@@ -20,8 +20,8 @@ export default function TradesPage({ user, onLogout }) {
       const res = await api.get("/trades", { params });
       setTrades(res.data.trades || []);
       setTotal(res.data.total || 0);
-    } catch {
-      // silently swallow — UI shows empty state
+    } catch (err) {
+      console.error('Trades fetch failed:', err?.message || err);
     } finally {
       setLoading(false);
     }

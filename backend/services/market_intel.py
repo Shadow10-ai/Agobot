@@ -39,6 +39,7 @@ async def analyze_order_book(symbol, limit=100):
             "ask_usdt": round(ask_depth * price, 2),
             "ratio": round(bid_depth / ask_depth, 4) if ask_depth > 0 else 0,
         }
+    pressure = "NEUTRAL"
     if imbalance > 1.5:
         pressure = "STRONG_BUY"
     elif imbalance > 1.1:
