@@ -36,10 +36,11 @@ In the Render dashboard for `agobot-backend`, go to **Environment** tab and add:
 | `MONGO_URL` | Your MongoDB Atlas connection string |
 | `DB_NAME` | `agobot_prod` |
 | `JWT_SECRET` | Any long random string (e.g. `agobot-super-secret-2026`) |
-| `KRAKEN_API_KEY` | `xihFxbOY4/uZSRUGre1GGeZD3GxdSn8y0QrUJ9Xzf96j3l3/T4nSK5+t` |
-| `KRAKEN_API_SECRET` | `WdJSPv+fCPv/tUFGbpZOiZa0f9tFoggd9WqiQGM1KVm515ZdDJe6TFbzkuPHmIjCPr9xUYSTHIyBVu2iwsztYQ==` |
+| `KRAKEN_API_KEY` | Your Kraken API key (from Kraken API Management) |
+| `KRAKEN_API_SECRET` | Your Kraken API secret |
 
 > ⚠️ Mark `KRAKEN_API_KEY`, `KRAKEN_API_SECRET`, and `MONGO_URL` as **Secret** in Render.
+> ⚠️ Never commit API keys to this file. Use Render's Environment tab only.
 
 Click **"Create Web Service"** — Render will build and deploy automatically.
 

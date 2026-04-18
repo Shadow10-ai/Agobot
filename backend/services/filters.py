@@ -181,14 +181,16 @@ def check_risk_reward(entry, sl, tp, side, min_rr=2.5):
 
 
 async def check_overtrade_limits(db_ref, config):
-    """Check if we've exceeded max trades per hour or per day."""
-    max_per_hour = config.get("max_trades_per_hour", 2)
-    max_per_day = config.get("max_trades_per_day", 8)
+    """Check if we've exceeded max trades per hour or per day.
+    Only counts LIVE mode trades — DRY simulation trades are excluded."""
+    max_per_hour = config.get("max_trades_per_hour", 5)
+    max_per_day = config.get("max_trades_per_day", 20)
     now = datetime.now(timezone.utc)
     hour_ago = (now - timedelta(hours=1)).isoformat()
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    trades_last_hour = await db_ref.trades.count_documents({"closed_at": {"$gte": hour_ago}})
-    trades_today = await db_ref.trades.count_documents({"closed_at": {"$gte": day_start}})
+    live_filter = {"mode": "LIVE"}
+    trades_last_hour = await db_ref.trades.count_documents({"closed_at": {"$gte": hour_ago}, **live_filter})
+    trades_today = await db_ref.trades.count_documents({"closed_at": {"$gte": day_start}, **live_filter})
     hour_ok = trades_last_hour < max_per_hour
     day_ok = trades_today < max_per_day
     return hour_ok and day_ok, trades_last_hour, max_per_hour, trades_today, max_per_day

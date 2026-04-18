@@ -98,6 +98,11 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 - [2026-04] Migrated exchange from Binance/Bybit → Kraken via ccxt (bypasses Render US IP blocks permanently)
 - [2026-04] Removed BNB from all symbol lists (not on Kraken), added symbol converter to_kraken_symbol()
 - [2026-04] Fixed BINANCE_API_KEY undefined variable bug in bot_routes.py
+- [2026-04] CRITICAL FIX: check_overtrade_limits now only counts LIVE mode trades (DRY trades no longer block live execution)
+- [2026-04] Raised default max_slippage_percent from 0.1% → 1.0%, max_trades_per_day from 15 → 20
+- [2026-04] Added GET /api/bot/diagnose endpoint (real-time gate-by-gate filter status)
+- [2026-04] Added compound MongoDB index on trades(closed_at, mode) for performance
+- [2026-04] Removed plaintext Kraken API keys from DEPLOYMENT.md (security fix)
 
 ## Render Deployment Lessons Learned
 1. packageManager field in package.json blocks npm on Render → removed
@@ -108,12 +113,17 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 6. MongoDB Atlas IP whitelist must include 0.0.0.0/0 for Render dynamic IPs
 
 ## P0/P1/P2 Remaining Backlog
+### P0 — Deployed, Pending Verification
+- First LIVE Kraken trade execution (filters unblocked, deploy to verify)
+
 ### P1 — Next Up
+- Update production DB config after deploy: max_slippage_percent → 1.0, max_trades_per_day → 20 (via Config UI)
 - WebSocket real-time updates (replace setInterval polling)
 - Telegram/Email trade notifications (alerts on position open/close)
+- Re-enable ML gate once 30+ LIVE labeled trades accumulate
 
 ### P2 — Future
-- Multi-exchange support (Bybit as primary alternative to Binance)
+- Multi-exchange support (Bybit as primary alternative)
 - Strategy marketplace (share/compare strategies with community)
 - Mobile-responsive dashboard optimization
 

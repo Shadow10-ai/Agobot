@@ -67,7 +67,7 @@ async def startup_event():
     try:
         await db.users.create_index("email", unique=True)
         await db.positions.create_index([("status", 1), ("symbol", 1)])
-        await db.trades.create_index([("closed_at", -1)])
+        await db.trades.create_index([("closed_at", -1), ("mode", 1)])
         await db.signal_dataset.create_index([("timestamp", -1)])
         await db.price_history.create_index("timestamp")
         logger.info("MongoDB indexes created")

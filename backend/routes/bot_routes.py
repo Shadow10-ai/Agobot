@@ -199,18 +199,80 @@ async def get_filter_status(user=Depends(get_current_user)):
         config = await get_default_config()
     return {
         "filters": {
-            "max_trades_per_hour": config.get("max_trades_per_hour", 2),
-            "max_trades_per_day": config.get("max_trades_per_day", 8),
+            "max_trades_per_hour": config.get("max_trades_per_hour", 5),
+            "max_trades_per_day": config.get("max_trades_per_day", 20),
             "min_risk_reward_ratio": config.get("min_risk_reward_ratio", 2.5),
             "cooldown_after_loss_scans": config.get("cooldown_after_loss_scans", 6),
             "min_confidence_score": config.get("min_confidence_score", 0.60),
             "spread_max_percent": config.get("spread_max_percent", 0.15),
             "min_24h_volume_usdt": config.get("min_24h_volume_usdt", 1000000),
-            "max_slippage_percent": config.get("max_slippage_percent", 0.1),
+            "max_slippage_percent": config.get("max_slippage_percent", 1.0),
             "require_trend_alignment": config.get("require_trend_alignment", True),
         },
         "cooldown_state": {
             "scans_since_loss": state._cooldown_state["scans_since_loss"],
             "consecutive_losses": state._cooldown_state["consecutive_losses"]
+        }
+    }
+
+
+@router.get("/bot/diagnose")
+async def diagnose_bot(user=Depends(get_current_user)):
+    """Real-time diagnostic: shows exactly which gate is blocking the bot right now."""
+    from datetime import datetime, timezone, timedelta
+    from services.filters import check_overtrade_limits
+    from services.risk_service import check_circuit_breaker, check_trading_session
+
+    config = await db.bot_config.find_one({"active": True}, {"_id": 0})
+    if not config:
+        config = await get_default_config()
+
+    now = datetime.now(timezone.utc)
+    hour_ago = (now - timedelta(hours=1)).isoformat()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    # Count LIVE and DRY trades separately for visibility
+    live_hour = await db.trades.count_documents({"closed_at": {"$gte": hour_ago}, "mode": "LIVE"})
+    dry_hour  = await db.trades.count_documents({"closed_at": {"$gte": hour_ago}, "mode": "DRY"})
+    live_day  = await db.trades.count_documents({"closed_at": {"$gte": day_start}, "mode": "LIVE"})
+    dry_day   = await db.trades.count_documents({"closed_at": {"$gte": day_start}, "mode": "DRY"})
+    open_pos  = await db.positions.count_documents({"status": "OPEN"})
+
+    max_per_hour = config.get("max_trades_per_hour", 5)
+    max_per_day  = config.get("max_trades_per_day", 20)
+    ot_ok = (live_hour < max_per_hour) and (live_day < max_per_day)
+
+    cb_ok, current_dd = await check_circuit_breaker(db, config)
+    session_ok, active_session = check_trading_session(config)
+
+    cd_required = config.get("cooldown_after_loss_scans", 6)
+    cd_scans    = state._cooldown_state["scans_since_loss"]
+    cd_ok       = cd_scans >= cd_required
+
+    gates = {
+        "circuit_breaker":  {"pass": cb_ok,      "detail": f"drawdown {current_dd:.2f}% vs max {config.get('max_total_drawdown_percent', 5)}%"},
+        "trading_session":  {"pass": session_ok,  "detail": f"current session: {active_session}"},
+        "overtrade_limit":  {"pass": ot_ok,       "detail": f"LIVE {live_hour}/{max_per_hour} /hr  |  {live_day}/{max_per_day} /day  (DRY ignored: {dry_hour}/hr, {dry_day}/day)"},
+        "cooldown":         {"pass": cd_ok,       "detail": f"{cd_scans}/{cd_required} scans since last loss"},
+        "open_positions":   {"pass": open_pos < 3, "detail": f"{open_pos} open (max 3)"},
+    }
+
+    blocked_by = [k for k, v in gates.items() if not v["pass"]]
+    return {
+        "bot_running":   state.bot_state["running"],
+        "mode":          state.bot_state["mode"],
+        "kraken_connected": state.binance_client is not None,
+        "scan_count":    state.bot_state["scan_count"],
+        "gates":         gates,
+        "blocked_by":    blocked_by,
+        "can_trade_now": len(blocked_by) == 0,
+        "config_snapshot": {
+            "max_trades_per_hour":    max_per_hour,
+            "max_trades_per_day":     max_per_day,
+            "max_slippage_percent":   config.get("max_slippage_percent", 1.0),
+            "min_confidence_score":   config.get("min_confidence_score", 0.60),
+            "min_entry_probability":  config.get("min_entry_probability", 0.65),
+            "base_usdt_per_trade":    config.get("base_usdt_per_trade", 8.0),
+            "ml_min_win_probability": config.get("ml_min_win_probability", 0.0),
         }
     }

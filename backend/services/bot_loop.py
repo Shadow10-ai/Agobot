@@ -37,13 +37,13 @@ async def get_default_config():
         "mode": "DRY",
         "allow_short": False,
         "max_trades_per_hour": 5,
-        "max_trades_per_day": 15,
+        "max_trades_per_day": 20,
         "min_risk_reward_ratio": 2.5,
         "cooldown_after_loss_scans": 6,
         "min_confidence_score": 0.60,
         "spread_max_percent": 0.15,
         "min_24h_volume_usdt": 1000000,
-        "max_slippage_percent": 0.1,
+        "max_slippage_percent": 1.0,
         "require_trend_alignment": True,
         "ml_min_win_probability": 0.55,
         "allowed_sessions": ["ASIA", "LONDON", "NYC"],
@@ -256,7 +256,7 @@ async def bot_scan_loop():
                                         all_pass = False
                                     regime_mult = signal.get("regime_size_multiplier", 1.0)
                                     adjusted_usdt = base_usdt * regime_mult
-                                    slip_ok, slip_pct = estimate_slippage(candles_used, adjusted_usdt, config.get("max_slippage_percent", 0.1))
+                                    slip_ok, slip_pct = estimate_slippage(candles_used, adjusted_usdt, config.get("max_slippage_percent", 1.0))
                                     filters_passed["slippage"] = slip_ok
                                     if not slip_ok:
                                         all_pass = False
