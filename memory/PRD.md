@@ -103,6 +103,9 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 - [2026-04] Added GET /api/bot/diagnose endpoint (real-time gate-by-gate filter status)
 - [2026-04] Added compound MongoDB index on trades(closed_at, mode) for performance
 - [2026-04] Removed plaintext Kraken API keys from DEPLOYMENT.md (security fix)
+- [2026-04] Code review fixes: defensive defaults in risk_service, market_intel, filters; error logging in all 7 React catch blocks
+- [2026-04] CRITICAL BUG FIX: Failed live Kraken orders no longer create phantom DRY positions (was blocking bot after 1 trade)
+- [2026-04] Added POST /api/bot/clear-phantom-positions endpoint to purge ghost positions from production DB
 
 ## Render Deployment Lessons Learned
 1. packageManager field in package.json blocks npm on Render → removed

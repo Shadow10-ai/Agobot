@@ -216,6 +216,31 @@ async def get_filter_status(user=Depends(get_current_user)):
     }
 
 
+@router.post("/bot/clear-phantom-positions")
+async def clear_phantom_positions(user=Depends(get_current_user)):
+    """Close all open DRY-mode positions. Use this when the bot is in LIVE mode to remove
+    ghost positions left over from failed live order attempts."""
+    open_dry = await db.positions.find(
+        {"status": "OPEN", "mode": "DRY"}, {"_id": 0, "id": 1, "symbol": 1}
+    ).to_list(50)
+    if not open_dry:
+        return {"cleared": 0, "message": "No phantom DRY positions found — bot slots are clean."}
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    ids = [p["id"] for p in open_dry]
+    await db.positions.update_many(
+        {"id": {"$in": ids}},
+        {"$set": {"status": "CANCELLED", "exit_reason": "PHANTOM_CLEANUP", "closed_at": now}}
+    )
+    symbols_cleared = [p["symbol"] for p in open_dry]
+    logger.info(f"Cleared {len(ids)} phantom DRY positions: {symbols_cleared}")
+    return {
+        "cleared": len(ids),
+        "symbols": symbols_cleared,
+        "message": f"Removed {len(ids)} phantom DRY position(s). Bot is free to trade again."
+    }
+
+
 @router.get("/bot/diagnose")
 async def diagnose_bot(user=Depends(get_current_user)):
     """Real-time diagnostic: shows exactly which gate is blocking the bot right now."""

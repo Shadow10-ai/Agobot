@@ -336,8 +336,8 @@ async def bot_scan_loop():
                                             entry_price = result["avg_price"]
                                             logger.info(f"LIVE {order_side} {symbol}: order {result['order_id']}, filled {quantity} @ {entry_price}")
                                         except Exception as e:
-                                            logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}. Recording as DRY.")
-                                            trade_mode = "DRY"  # Fall back to simulated recording
+                                            logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}. Skipping — no phantom position recorded.")
+                                            continue  # Do NOT create a fake DRY position; try next symbol
                                     now = datetime.now(timezone.utc).isoformat()
                                     position_doc = {
                                         "id": str(uuid.uuid4()),
