@@ -19,6 +19,8 @@ from services.risk_service import check_circuit_breaker, check_trading_session, 
 
 logger = logging.getLogger(__name__)
 
+KRAKEN_TAKER_FEE = 0.0026  # 0.26% per side; applied to both entry and exit for accurate P&L
+
 
 async def get_default_config():
     config = {
@@ -144,6 +146,12 @@ async def bot_scan_loop():
                     else:
                         pnl = (pos["entry_price"] - exit_price) * pos["quantity"]
                         pnl_percent = ((pos["entry_price"] - exit_price) / pos["entry_price"]) * 100
+                    # Deduct Kraken taker fee (0.26%) on both entry and exit legs for LIVE trades
+                    if pos.get("mode") == "LIVE":
+                        fee = (pos["entry_price"] + exit_price) * pos["quantity"] * KRAKEN_TAKER_FEE
+                        pnl = pnl - fee
+                        invested = pos["entry_price"] * pos["quantity"]
+                        pnl_percent = (pnl / invested * 100) if invested > 0 else pnl_percent
                     now = datetime.now(timezone.utc).isoformat()
                     await db.positions.update_one(
                         {"id": pos["id"]},
@@ -221,6 +229,15 @@ async def bot_scan_loop():
                                 if state.bot_state["scan_count"] % 10 == 0:
                                     logger.info(f"Cooldown active: {cd_scans}/{cd_required} scans since last loss")
                             else:
+                                # Fetch Kraken free balance once per scan — reused for all symbols
+                                live_balance_usdt = None
+                                if is_live:
+                                    try:
+                                        bal = await state.binance_client.fetch_balance()
+                                        live_balance_usdt = float(bal.get("USDT", {}).get("free", 0))
+                                        logger.debug(f"Kraken free USDT: {live_balance_usdt:.2f}")
+                                    except Exception as e:
+                                        logger.warning(f"Balance check failed: {e}")
                                 for symbol in symbols:
                                     if await db.positions.find_one({"symbol": symbol, "status": "OPEN"}):
                                         continue
@@ -318,7 +335,7 @@ async def bot_scan_loop():
                                             filters_passed["ml_filter"] = True
                                     else:
                                         filters_passed["ml_filter"] = True
-                                    await log_signal_to_dataset(db, signal, candles_used, confidence, conf_breakdown, filters_passed, all_pass, config)
+                                    await log_signal_to_dataset(db, signal, candles_used, confidence, conf_breakdown, filters_passed, all_pass, config, mode=current_mode)
                                     if not all_pass:
                                         failed = [k for k, v in filters_passed.items() if not v]
                                         if state.bot_state["scan_count"] % 5 == 0:
@@ -329,6 +346,13 @@ async def bot_scan_loop():
                                     entry_price = signal["price"]
                                     trade_mode = current_mode  # LIVE or DRY
                                     if is_live:
+                                        # Guard: skip if Kraken balance is insufficient
+                                        if live_balance_usdt is not None and live_balance_usdt < adjusted_usdt:
+                                            logger.warning(
+                                                f"Insufficient balance: {live_balance_usdt:.2f} USDT "
+                                                f"< {adjusted_usdt:.2f} required for {symbol}. Skipping."
+                                            )
+                                            continue
                                         try:
                                             order_side = "BUY" if signal_side == "LONG" else "SELL"
                                             result = await place_live_market_order(symbol, order_side, adjusted_usdt)

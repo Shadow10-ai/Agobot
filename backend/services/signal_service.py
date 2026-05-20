@@ -20,7 +20,7 @@ def calculate_signal(symbol, candles=None, allow_short=False):
     if not all([fast_ema, slow_ema, rsi, macd, bb, atr]):
         return None
 
-    vol_passes, vol_ratio = volume_filter(candles, multiplier=1.2)
+    vol_passes, vol_ratio = volume_filter(candles, multiplier=1.5)
     regime, vol_percentile, regime_size_mult = volatility_regime(candles)
 
     structure_candles = candles[-10:-2]

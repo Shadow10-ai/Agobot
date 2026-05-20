@@ -3,7 +3,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from auth import get_current_user
 from config import VALID_SYMBOLS
 from models import BacktestRequest, StrategyCompareRequest
-from services.backtest_service import generate_historical_candles, run_backtest
+from services.backtest_service import run_backtest
+from services.binance_service import fetch_backtest_candles
 
 router = APIRouter()
 
@@ -14,9 +15,16 @@ async def run_backtest_api(params: BacktestRequest, user=Depends(get_current_use
         raise HTTPException(status_code=400, detail=f"Invalid symbol. Choose from: {VALID_SYMBOLS}")
     if params.period_days < 1 or params.period_days > 180:
         raise HTTPException(status_code=400, detail="period_days must be between 1 and 180")
-    candles = generate_historical_candles(params.symbol, params.period_days)
+    candles, data_source = await fetch_backtest_candles(params.symbol, params.period_days)
     result = run_backtest(candles, params)
     result["params"] = params.model_dump()
+    result["data_source"] = data_source
+    result["candle_count"] = len(candles)
+    if data_source == "simulated":
+        result["data_warning"] = (
+            "Results based on SIMULATED candles (Gaussian random walk). "
+            "Connect Kraken API keys to backtest on real market data."
+        )
     return result
 
 
@@ -24,7 +32,7 @@ async def run_backtest_api(params: BacktestRequest, user=Depends(get_current_use
 async def compare_strategies(req: StrategyCompareRequest, user=Depends(get_current_user)):
     if req.symbol not in VALID_SYMBOLS:
         raise HTTPException(status_code=400, detail=f"Invalid symbol. Choose from: {VALID_SYMBOLS}")
-    candles = generate_historical_candles(req.symbol, req.period_days)
+    candles, data_source = await fetch_backtest_candles(req.symbol, req.period_days)
     result_a = run_backtest(candles, req.strategy_a)
     result_b = run_backtest(candles, req.strategy_b)
     a_sum = result_a["summary"]
@@ -41,6 +49,8 @@ async def compare_strategies(req: StrategyCompareRequest, user=Depends(get_curre
         "symbol": req.symbol,
         "period_days": req.period_days,
         "candle_count": len(candles),
+        "data_source": data_source,
+        **({"data_warning": "Results based on SIMULATED candles. Connect Kraken for real data."} if data_source == "simulated" else {}),
         "strategy_a": {
             "label": req.strategy_a.label or "Strategy A",
             "summary": result_a["summary"],

@@ -40,7 +40,11 @@ async def train_ml_model(db_ref):
     state.ml_model_state["trades_since_retrain"] = 0
     try:
         labeled = await db_ref.signal_dataset.find(
-            {"outcome": {"$in": ["WIN", "LOSS"]}}, {"_id": 0}
+            {
+                "outcome": {"$in": ["WIN", "LOSS"]},
+                "source": {"$ne": "seeded_from_trades"},  # exclude fabricated training data
+            },
+            {"_id": 0},
         ).to_list(10000)
         if len(labeled) < ML_MIN_SAMPLES:
             state.ml_model_state["status"] = "LEARNING"
@@ -139,76 +143,21 @@ async def load_ml_model():
 
 
 async def seed_dataset_from_trades(db_ref):
-    """Seed the signal_dataset from historical trades."""
-    existing_count = await db_ref.signal_dataset.count_documents({"outcome": {"$ne": None}})
-    if existing_count >= ML_MIN_SAMPLES:
-        return
-    trades = await db_ref.trades.find({}, {"_id": 0}).sort("closed_at", -1).limit(200).to_list(200)
-    seeded = 0
-    for trade in trades:
-        exists = await db_ref.signal_dataset.find_one({
-            "symbol": trade["symbol"],
-            "trade_taken": True,
-            "outcome": {"$ne": None},
-            "timestamp": trade.get("opened_at", "")
-        })
-        if exists:
-            continue
-        entry_price = trade.get("entry_price", 0)
-        if entry_price <= 0:
-            continue
-        pnl = trade.get("pnl", 0)
-        outcome = "WIN" if pnl > 0 else "LOSS"
-        atr_est = abs(trade.get("stop_loss", entry_price) - entry_price) / 1.2 if trade.get("stop_loss") else entry_price * 0.01
-        dataset_entry = {
-            "id": str(uuid.uuid4()),
-            "timestamp": trade.get("opened_at", datetime.now(timezone.utc).isoformat()),
-            "symbol": trade["symbol"],
-            "side": trade.get("side", "LONG"),
-            "price": entry_price,
-            "rsi": 45 + random.uniform(-10, 10),
-            "macd_value": random.uniform(-0.001, 0.001),
-            "macd_signal": random.uniform(-0.001, 0.001),
-            "macd_histogram": random.uniform(-0.0005, 0.0005),
-            "ema_fast": entry_price * (1 + random.uniform(-0.002, 0.002)),
-            "ema_slow": entry_price * (1 + random.uniform(-0.003, 0.003)),
-            "ema_slope": random.uniform(-0.5, 0.5),
-            "bb_upper": entry_price * 1.02,
-            "bb_middle": entry_price,
-            "bb_lower": entry_price * 0.98,
-            "atr": round(atr_est, 6),
-            "atr_percent": round(atr_est / entry_price * 100, 4),
-            "volume_ratio": random.uniform(0.5, 2.5),
-            "volume_passes": random.choice([True, False]),
-            "volatility_regime": random.choice(["LOW_VOL", "NORMAL", "HIGH_VOL"]),
-            "volatility_percentile": random.uniform(0.1, 0.9),
-            "trend": random.choice(["UPTREND", "RANGE", "DOWNTREND"]),
-            "body_ratio": random.uniform(0.2, 0.8),
-            "upper_wick_ratio": random.uniform(0.05, 0.3),
-            "lower_wick_ratio": random.uniform(0.05, 0.3),
-            "pct_change_5": random.uniform(-2, 2),
-            "pct_change_20": random.uniform(-5, 5),
-            "technical_probability": random.uniform(0.5, 0.85),
-            "confidence_score": random.uniform(0.5, 0.9),
-            "confidence_breakdown": {},
-            "filters_passed": {},
-            "trade_taken": True,
-            "sl": trade.get("stop_loss", 0),
-            "tp": trade.get("take_profit", 0),
-            "rr_ratio": 2.0 + random.uniform(-0.5, 1.0),
-            "outcome": outcome,
-            "pnl": pnl,
-            "pnl_percent": trade.get("pnl_percent", 0),
-            "exit_reason": trade.get("exit_reason", "UNKNOWN"),
-            "source": "seeded_from_trades",
-        }
-        await db_ref.signal_dataset.insert_one(dataset_entry)
-        seeded += 1
-    if seeded > 0:
-        logger.info(f"ML: Seeded {seeded} entries from historical trades into dataset")
+    """No-op.
+
+    This function previously seeded the signal_dataset with fabricated indicator values
+    (random RSI, MACD, EMA, volume etc.) paired with real WIN/LOSS outcomes.
+    That poisoned the ML model — it was literally learning that random feature vectors
+    predict trade outcomes, which means it learned nothing except noise.
+
+    The ML model now trains exclusively on signals recorded by `log_signal_to_dataset`
+    during live bot scans, which captures the *actual* indicator state at the time
+    of entry. Do not re-enable the fabrication logic.
+    """
+    return
 
 
-async def log_signal_to_dataset(db_ref, signal, candles, confidence, confidence_breakdown, filters_passed, trade_taken, config):
+async def log_signal_to_dataset(db_ref, signal, candles, confidence, confidence_breakdown, filters_passed, trade_taken, config, mode="DRY"):
     """Log every signal with full features for ML training."""
     if not candles or len(candles) < 20:
         return
@@ -261,6 +210,7 @@ async def log_signal_to_dataset(db_ref, signal, candles, confidence, confidence_
         "sl": signal["sl"],
         "tp": signal["tp"],
         "rr_ratio": confidence_breakdown.get("rr_ratio", 0),
+        "mode": mode,
         "outcome": None,
         "pnl": None,
         "pnl_percent": None,

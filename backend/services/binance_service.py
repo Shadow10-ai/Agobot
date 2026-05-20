@@ -162,3 +162,82 @@ def generate_candles(symbol, count=60):
         price = close_p
     state.SYMBOL_PRICES[symbol] = round(candles[-1]['close'], 8)
     return candles
+
+
+
+async def fetch_backtest_candles(symbol: str, period_days: int, interval_minutes: int = 15):
+    """Fetch real historical OHLCV from Kraken for backtesting.
+
+    Returns (candles, data_source) where data_source is 'kraken' or 'simulated'.
+    Falls back to simulation transparently if the client is unavailable or returns
+    insufficient data, so the backtester never crashes.
+
+    Pagination: Kraken allows ~720 candles per request. We paginate using `since`
+    until we cover the full period or receive fewer candles than the page size.
+    """
+    from services.backtest_service import generate_historical_candles
+
+    exchange = state.binance_client
+    if not exchange:
+        logger.info(f"Backtest [{symbol}]: Kraken not connected — using simulation")
+        return generate_historical_candles(symbol, period_days, interval_minutes), "simulated"
+
+    # Kraken does not support 3m; fall back to 5m
+    if interval_minutes == 3:
+        interval_minutes = 5
+    tf_map = {1: "1m", 5: "5m", 15: "15m", 30: "30m", 60: "1h", 240: "4h", 1440: "1d"}
+    tf = tf_map.get(interval_minutes, "15m")
+
+    since_ms = int(
+        (datetime.now(timezone.utc) - timedelta(days=period_days)).timestamp() * 1000
+    )
+    kraken_symbol = to_kraken_symbol(symbol)
+    all_ohlcv = []
+    page_limit = 720
+
+    try:
+        while True:
+            ohlcv = await exchange.fetch_ohlcv(
+                kraken_symbol, tf, since=since_ms, limit=page_limit
+            )
+            if not ohlcv:
+                break
+            all_ohlcv.extend(ohlcv)
+            if len(ohlcv) < page_limit:
+                break  # Last page
+            last_ts = ohlcv[-1][0]
+            since_ms = last_ts + interval_minutes * 60 * 1000
+            # Stop once we've reached near-present
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            if since_ms >= now_ms - interval_minutes * 60 * 1000:
+                break
+            await asyncio.sleep(0.4)  # Respect Kraken rate limits
+    except Exception as e:
+        logger.warning(f"Backtest [{symbol}]: Kraken OHLCV fetch failed ({e}) — using simulation")
+        return generate_historical_candles(symbol, period_days, interval_minutes), "simulated"
+
+    # Filter out malformed candles (zero close price sometimes returned at boundaries)
+    valid = [c for c in all_ohlcv if c[4] > 0]
+    if len(valid) < 50:
+        logger.warning(
+            f"Backtest [{symbol}]: Only {len(valid)} valid candles returned — using simulation"
+        )
+        return generate_historical_candles(symbol, period_days, interval_minutes), "simulated"
+
+    candles = [
+        {
+            "open":      float(c[1]),
+            "high":      float(c[2]),
+            "low":       float(c[3]),
+            "close":     float(c[4]),
+            "volume":    float(c[5]),
+            "time":      datetime.fromtimestamp(c[0] / 1000, tz=timezone.utc).isoformat(),
+            "timestamp": int(c[0]),
+        }
+        for c in valid
+    ]
+    logger.info(
+        f"Backtest [{symbol}]: fetched {len(candles)} real {tf} candles from Kraken"
+    )
+    return candles, "kraken"
+
