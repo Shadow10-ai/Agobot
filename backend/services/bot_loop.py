@@ -132,12 +132,14 @@ async def bot_scan_loop():
                         if current_price <= pos["entry_price"] - activation_atr:
                             await db.positions.update_one({"id": pos["id"]}, {"$set": {"trail_activated": True}})
                 if exit_reason:
+                    close_order_id = None
                     if is_live and pos.get("mode") == "LIVE":
                         try:
                             close_side = "SELL" if pos_side == "LONG" else "BUY"
                             close_result = await place_live_market_order(symbol, close_side, pos["quantity"] * exit_price)
                             exit_price = close_result.get("avg_price", exit_price)
-                            logger.info(f"LIVE {close_side} {symbol}: order {close_result['order_id']}, filled {close_result['executed_qty']}")
+                            close_order_id = close_result.get("order_id")
+                            logger.info(f"LIVE {close_side} {symbol}: order {close_order_id}, filled {close_result['executed_qty']}")
                         except Exception as e:
                             logger.error(f"LIVE close failed for {symbol}, using market price: {e}")
                     if pos_side == "LONG":
@@ -171,7 +173,9 @@ async def bot_scan_loop():
                         "closed_at": now,
                         "mode": pos.get("mode", "DRY"),
                         "stop_loss": pos["stop_loss"],
-                        "take_profit": pos["take_profit"]
+                        "take_profit": pos["take_profit"],
+                        "entry_order_id": pos.get("kraken_order_id"),
+                        "exit_order_id": close_order_id,
                     }
                     await db.trades.insert_one(trade_doc)
                     await db.bot_state.update_one(
@@ -342,6 +346,7 @@ async def bot_scan_loop():
                                             ml_info = f" ml={ml_win_prob:.3f}" if ml_win_prob else ""
                                             logger.info(f"Signal rejected {symbol} {signal_side}: failed [{', '.join(failed)}] conf={confidence:.3f}{ml_info}")
                                         continue
+                                    kraken_order_id = None
                                     quantity = round(adjusted_usdt / signal["price"], 8)
                                     entry_price = signal["price"]
                                     trade_mode = current_mode  # LIVE or DRY
@@ -358,10 +363,20 @@ async def bot_scan_loop():
                                             result = await place_live_market_order(symbol, order_side, adjusted_usdt)
                                             quantity = result["executed_qty"]
                                             entry_price = result["avg_price"]
-                                            logger.info(f"LIVE {order_side} {symbol}: order {result['order_id']}, filled {quantity} @ {entry_price}")
+                                            kraken_order_id = result["order_id"]
+                                            logger.info(f"LIVE {order_side} {symbol}: order {kraken_order_id}, filled {quantity} @ {entry_price}")
                                         except Exception as e:
                                             logger.error(f"LIVE {signal_side} order failed for {symbol}: {e}. Skipping — no phantom position recorded.")
                                             continue  # Do NOT create a fake DRY position; try next symbol
+                                    # Recalculate SL/TP from actual fill price so spread never eats the stop distance
+                                    sl_dist = abs(signal["price"] - signal["sl"])
+                                    tp_dist = abs(signal["tp"] - signal["price"])
+                                    if signal_side == "LONG":
+                                        actual_sl = entry_price - sl_dist
+                                        actual_tp = entry_price + tp_dist
+                                    else:
+                                        actual_sl = entry_price + sl_dist
+                                        actual_tp = entry_price - tp_dist
                                     now = datetime.now(timezone.utc).isoformat()
                                     position_doc = {
                                         "id": str(uuid.uuid4()),
@@ -369,8 +384,8 @@ async def bot_scan_loop():
                                         "side": signal_side,
                                         "entry_price": round(entry_price, 8),
                                         "current_price": round(entry_price, 8),
-                                        "stop_loss": round(signal["sl"], 8),
-                                        "take_profit": round(signal["tp"], 8),
+                                        "stop_loss": round(actual_sl, 8),
+                                        "take_profit": round(actual_tp, 8),
                                         "quantity": quantity,
                                         "atr": round(signal["atr"], 8),
                                         "probability": round(signal["probability"], 4),
@@ -381,6 +396,7 @@ async def bot_scan_loop():
                                         "unrealized_pnl_percent": 0.0,
                                         "opened_at": now,
                                         "mode": trade_mode,
+                                        "kraken_order_id": kraken_order_id,
                                         "indicators": signal["indicators"],
                                         "volume_ratio": signal.get("volume_ratio", 0),
                                         "volatility_regime": signal.get("volatility_regime", "NORMAL"),
