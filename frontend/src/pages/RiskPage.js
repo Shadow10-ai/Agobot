@@ -3,6 +3,7 @@ import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
 import { ShieldAlert, Activity, Clock, BarChart3, RefreshCw, Play, Pause, TrendingUp, TrendingDown } from "lucide-react";
 import { toast } from "sonner";
+import { useWS } from "@/context/WebSocketContext";
 
 const StatBox = ({ label, value, sub, color = "text-white" }) => (
   <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-4">
@@ -37,6 +38,7 @@ export default function RiskPage({ user, onLogout }) {
   const [monteCarlo, setMonteCarlo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mcLoading, setMcLoading] = useState(false);
+  const { lastMessage } = useWS();
 
   const fetchData = useCallback(async () => {
     try {
@@ -60,6 +62,15 @@ export default function RiskPage({ user, onLogout }) {
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Re-fetch circuit breaker on every scan so drawdown stays current
+  useEffect(() => {
+    if (lastMessage?.type === "scan_update") {
+      api.get("/risk/circuit-breaker")
+        .then((r) => setCircuitBreaker(r.data))
+        .catch(() => {});
+    }
+  }, [lastMessage]);
 
   const runMonteCarlo = async () => {
     setMcLoading(true);

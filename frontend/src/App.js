@@ -12,6 +12,7 @@ import MLPage from "@/pages/MLPage";
 import RiskPage from "@/pages/RiskPage";
 import MarketIntelPage from "@/pages/MarketIntelPage";
 import { Toaster } from "sonner";
+import { WebSocketProvider } from "@/context/WebSocketContext";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -72,6 +73,7 @@ function App() {
   return (
     <div className="min-h-screen bg-[#0A0A0A]">
       <Toaster position="top-right" theme="dark" richColors />
+      <WebSocketProvider>
       <BrowserRouter>
         <Routes>
           <Route
@@ -155,6 +157,7 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      </WebSocketProvider>
     </div>
   );
 }

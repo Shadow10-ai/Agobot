@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
+import { useWS } from "@/context/WebSocketContext";
 import {
   TrendingUp,
   TrendingDown,
@@ -197,6 +198,7 @@ export default function DashboardPage({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [botLoading, setBotLoading] = useState(false);
   const intervalRef = useRef(null);
+  const { lastMessage, connected } = useWS();
 
   const fetchData = useCallback(async () => {
     try {
@@ -213,11 +215,27 @@ export default function DashboardPage({ user, onLogout }) {
     }
   }, []);
 
+  // Initial load + 30s refresh for full data (recent trades, performance chart)
   useEffect(() => {
     fetchData();
     intervalRef.current = setInterval(fetchData, 30000);
     return () => clearInterval(intervalRef.current);
   }, [fetchData]);
+
+  // WebSocket: live-update positions, prices, bot status on every scan (~10s)
+  useEffect(() => {
+    if (!lastMessage || lastMessage.type !== "scan_update") return;
+    setDashboard((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        bot_status: lastMessage.bot,
+        positions: lastMessage.positions,
+        open_positions_count: lastMessage.positions.length,
+        prices: lastMessage.prices,
+      };
+    });
+  }, [lastMessage]);
 
   const handleBotAction = async (action) => {
     setBotLoading(true);
@@ -272,6 +290,12 @@ export default function DashboardPage({ user, onLogout }) {
               {botStatus.mode} MODE
               {botStatus.last_scan && (
                 <> &middot; Last scan: {new Date(botStatus.last_scan).toLocaleTimeString()}</>
+              )}
+              {connected && (
+                <span className="ml-2 inline-flex items-center gap-1 text-[#00F090] text-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#00F090] inline-block animate-pulse" />
+                  LIVE
+                </span>
               )}
             </p>
           </div>

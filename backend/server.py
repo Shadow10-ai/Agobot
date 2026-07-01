@@ -30,6 +30,7 @@ from routes.ml_routes import router as ml_router
 from routes.risk_routes import router as risk_router
 from routes.market_intel_routes import router as market_intel_router
 from routes.misc_routes import router as misc_router
+from routes.ws_routes import router as ws_router
 
 # Import startup services
 from database import db
@@ -55,7 +56,7 @@ app.add_middleware(
 
 # Register all routers under /api prefix
 api_prefix = "/api"
-for router in [auth_router, bot_router, trading_router, backtest_router, ml_router, risk_router, market_intel_router, misc_router]:
+for router in [auth_router, bot_router, trading_router, backtest_router, ml_router, risk_router, market_intel_router, misc_router, ws_router]:
     app.include_router(router, prefix=api_prefix)
 
 
@@ -112,12 +113,16 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Dataset seed warning: {e}")
 
-    # If enough data, retrain
+    # If enough data, retrain — also retrain when model file is stale (training_samples == 0)
     try:
         labeled_count = await db.signal_dataset.count_documents({"outcome": {"$in": ["WIN", "LOSS"]}})
         from config import ML_MIN_SAMPLES
-        if labeled_count >= ML_MIN_SAMPLES and state.ml_model_state["status"] != "ACTIVE":
-            logger.info(f"Auto-training ML model on {labeled_count} labeled samples...")
+        stale_model = state.ml_model_state["training_samples"] == 0
+        should_train = labeled_count >= ML_MIN_SAMPLES and (
+            state.ml_model_state["status"] != "ACTIVE" or stale_model
+        )
+        if should_train:
+            logger.info(f"Training ML model on {labeled_count} labeled samples (stale={stale_model})...")
             await train_ml_model(db)
     except Exception as e:
         logger.warning(f"ML training warning: {e}")

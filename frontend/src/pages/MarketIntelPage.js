@@ -3,6 +3,7 @@ import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
 import { Waves, DollarSign, Activity, RefreshCw, ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 import { toast } from "sonner";
+import { useWS } from "@/context/WebSocketContext";
 
 const pressureColor = {
   STRONG_BUY: "text-emerald-400",
@@ -45,6 +46,7 @@ export default function MarketIntelPage({ user, onLogout }) {
   const [fundingRates, setFundingRates] = useState(null);
   const [whaleActivity, setWhaleActivity] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { lastMessage } = useWS();
 
   const fetchData = useCallback(async () => {
     try {
@@ -79,6 +81,13 @@ export default function MarketIntelPage({ user, onLogout }) {
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData, fetchSymbolDetail]);
+
+  // Refresh order flow on every bot scan (order book state changes with each scan)
+  useEffect(() => {
+    if (lastMessage?.type === "scan_update") {
+      fetchData();
+    }
+  }, [lastMessage, fetchData]);
 
   if (loading) {
     return (

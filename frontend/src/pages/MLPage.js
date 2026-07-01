@@ -3,6 +3,7 @@ import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
 import { Brain, Database, BarChart3, RefreshCw, Zap, TrendingUp, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import { useWS } from "@/context/WebSocketContext";
 
 const StatBox = ({ label, value, sub, color = "text-white" }) => (
   <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-4">
@@ -33,6 +34,7 @@ export default function MLPage({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [training, setTraining] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const { lastMessage } = useWS();
 
   const fetchData = useCallback(async () => {
     try {
@@ -54,6 +56,13 @@ export default function MLPage({ user, onLogout }) {
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Refresh automatically when the ML model retrains
+  useEffect(() => {
+    if (lastMessage?.type === "ml_update") {
+      fetchData();
+    }
+  }, [lastMessage, fetchData]);
 
   const handleTrain = async () => {
     setTraining(true);

@@ -104,6 +104,18 @@ async def train_ml_model(db_ref):
         })
         logger.info(f"ML Model trained v{state.ml_model_state['version']}: {len(y)} samples, "
                     f"acc={acc:.3f}, prec={prec:.3f}, rec={rec:.3f}, f1={f1:.3f}, cv={np.mean(cv_scores):.3f}")
+        # Notify connected WebSocket clients that ML model just updated
+        try:
+            from services.websocket_manager import ws_manager
+            asyncio.create_task(ws_manager.broadcast({
+                "type": "ml_update",
+                "status": "ACTIVE",
+                "accuracy": round(acc, 4),
+                "training_samples": len(y),
+                "version": state.ml_model_state["version"],
+            }))
+        except Exception:
+            pass
     except Exception as e:
         state.ml_model_state["status"] = "ERROR"
         logger.error(f"ML training failed: {e}")

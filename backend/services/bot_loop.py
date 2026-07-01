@@ -16,6 +16,7 @@ from services.filters import (
 )
 from services.ml_service import ml_predict, log_signal_to_dataset, update_dataset_outcome
 from services.risk_service import check_circuit_breaker, check_trading_session, detect_market_regime_advanced
+from services.websocket_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -425,6 +426,25 @@ async def bot_scan_loop():
                 await db.price_history.delete_many({"timestamp": {"$lt": cutoff}})
         except Exception as e:
             logger.error(f"Bot scan error: {e}")
+
+        # Broadcast live state to all WebSocket clients after every scan
+        try:
+            open_pos = await db.positions.find({"status": "OPEN"}, {"_id": 0}).to_list(10)
+            await ws_manager.broadcast({
+                "type": "scan_update",
+                "bot": {
+                    "running": state.bot_state["running"],
+                    "paused": state.bot_state["paused"],
+                    "mode": state.bot_state["mode"],
+                    "scan_count": state.bot_state["scan_count"],
+                    "last_scan": state.bot_state["last_scan"],
+                },
+                "positions": open_pos,
+                "prices": {k: round(v, 8) for k, v in state.SYMBOL_PRICES.items()},
+            })
+        except Exception as e:
+            logger.debug(f"WS broadcast error: {e}")
+
         await asyncio.sleep(10)
     logger.info("Bot scan loop stopped")
 
