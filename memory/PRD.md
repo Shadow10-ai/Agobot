@@ -119,9 +119,10 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 5. BinanceAsyncClient.create() must have asyncio.wait_for timeout (15s) to prevent startup hang
 6. MongoDB Atlas IP whitelist must include 0.0.0.0/0 for Render dynamic IPs
 
+|- [2026-07] P1 ML Auto-Training Fix: startup now retrains when training_samples==0 (stale model file); triggers correctly on 86 labeled records, stays LEARNING (0 eligible = correct, seeded data excluded)
+|- [2026-07] P1 WebSocket Real-time Updates: backend ws_manager + /api/ws endpoint + bot_loop broadcasts scan_update every scan; frontend WebSocketProvider + DashboardPage LIVE indicator + MLPage/RiskPage/MarketIntelPage subscriptions
 |- [2026-07] Complete rewrite of `signal_service.py`: event-driven patterns (EMA13 Pullback, EMA Cross+MACD, Sweep Reversal) replacing 0%-win-rate state logic
 |- [2026-07] Fixed Gate 2 body check: lowered from 0.25→0.05 globally; Pattern B enforces its own 0.20 body requirement (pin-bar sweep candles no longer rejected)
-|- [2026-07] Validated full signal pipeline: syntax OK, no crashes, fee gate confirmed (all 5 symbols clear 1.56% minimum TP at worst-case ATR)
 
 ## P0/P1/P2 Remaining Backlog
 ### P0 — Deployed, Pending Verification
