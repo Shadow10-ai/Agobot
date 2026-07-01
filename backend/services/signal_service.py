@@ -71,11 +71,15 @@ def calculate_signal(symbol, candles=None, allow_short=False):
     if abs(current_price - fast_ema) / atr > 1.5:
         return None
 
-    # Gate 2: Candle body must be real — reject indecision / wick-heavy candles
+    # Gate 2: Reject near-perfect dojis only.
+    # Threshold is intentionally low (5%) so pin-bar sweep candles (Pattern C)
+    # and small-body pullback candles (Pattern A) are NOT rejected here.
+    # Pattern B enforces its own stronger body check further down.
     last       = candles[-1]
     c_range    = last["high"] - last["low"]
     body       = abs(last["close"] - last["open"])
-    if c_range > 0 and body / c_range < 0.25:
+    body_ratio = (body / c_range) if c_range > 0 else 1.0
+    if body_ratio < 0.05:
         return None
 
     vol_passes, vol_ratio                    = volume_filter(candles, multiplier=1.5)
@@ -127,9 +131,11 @@ def calculate_signal(symbol, candles=None, allow_short=False):
         # Pattern B: Fresh EMA5/EMA13 crossover this candle + MACD histogram rising
         # Rationale: the exact candle of the cross is the lowest-risk entry.
         # Requiring histogram > prev histogram ensures momentum is genuinely building.
+        # Also requires a real body (>= 20% of range) — a crossover candle should be decisive.
         fresh_cross_up = (
             prev_fast is not None and prev_slow is not None
             and prev_fast <= prev_slow   # was below or equal last bar
+            and body_ratio >= 0.20       # crossover candle must have a real body
         )
         macd_accelerating_up = (
             macd["histogram"] > 0
@@ -158,6 +164,7 @@ def calculate_signal(symbol, candles=None, allow_short=False):
         fresh_cross_down = (
             prev_fast is not None and prev_slow is not None
             and prev_fast >= prev_slow
+            and body_ratio >= 0.20
         )
         macd_accelerating_down = (
             macd["histogram"] < 0

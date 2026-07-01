@@ -81,6 +81,10 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 - `GET /api/market-intel/order-flow` — Order book analysis
 - `GET /api/risk/circuit-breaker` — Drawdown status
 
+## Credentials
+- App UI: `gozmokchris@gmail.com` / `f7e8251e`
+- MongoDB: see backend/.env (MONGO_URL)
+
 ## What's Been Implemented
 - [2026-02] Initial port from Node.js to Python/React
 - [2026-02] DRY/LIVE mode toggle + SHORT selling toggle
@@ -114,6 +118,10 @@ Port a Node.js crypto trading bot ("AgoBot") to Python/React with institutional-
 4. Health check path must be set to /api/health (not default /)
 5. BinanceAsyncClient.create() must have asyncio.wait_for timeout (15s) to prevent startup hang
 6. MongoDB Atlas IP whitelist must include 0.0.0.0/0 for Render dynamic IPs
+
+|- [2026-07] Complete rewrite of `signal_service.py`: event-driven patterns (EMA13 Pullback, EMA Cross+MACD, Sweep Reversal) replacing 0%-win-rate state logic
+|- [2026-07] Fixed Gate 2 body check: lowered from 0.25→0.05 globally; Pattern B enforces its own 0.20 body requirement (pin-bar sweep candles no longer rejected)
+|- [2026-07] Validated full signal pipeline: syntax OK, no crashes, fee gate confirmed (all 5 symbols clear 1.56% minimum TP at worst-case ATR)
 
 ## P0/P1/P2 Remaining Backlog
 ### P0 — Deployed, Pending Verification
