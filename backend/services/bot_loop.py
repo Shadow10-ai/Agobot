@@ -239,8 +239,11 @@ async def bot_scan_loop():
                                 if is_live:
                                     try:
                                         bal = await state.binance_client.fetch_balance()
-                                        live_balance_usdt = float(bal.get("USDT", {}).get("free", 0))
-                                        logger.debug(f"Kraken free USDT: {live_balance_usdt:.2f}")
+                                        # Kraken returns USDT or USD depending on account type
+                                        usdt_free = float(bal.get("USDT", {}).get("free", 0))
+                                        usd_free  = float(bal.get("USD",  {}).get("free", 0))
+                                        live_balance_usdt = max(usdt_free, usd_free)
+                                        logger.debug(f"Kraken free balance: USDT={usdt_free:.2f}, USD={usd_free:.2f}, using={live_balance_usdt:.2f}")
                                     except Exception as e:
                                         logger.warning(f"Balance check failed: {e}")
                                 for symbol in symbols:
@@ -343,8 +346,11 @@ async def bot_scan_loop():
                                     await log_signal_to_dataset(db, signal, candles_used, confidence, conf_breakdown, filters_passed, all_pass, config, mode=current_mode)
                                     if not all_pass:
                                         failed = [k for k, v in filters_passed.items() if not v]
-                                        if state.bot_state["scan_count"] % 5 == 0:
-                                            ml_info = f" ml={ml_win_prob:.3f}" if ml_win_prob else ""
+                                        # Log every rejection in LIVE mode for full visibility
+                                        ml_info = f" ml={ml_win_prob:.3f}" if ml_win_prob else ""
+                                        if is_live:
+                                            logger.info(f"[LIVE] Signal rejected {symbol} {signal_side}: failed [{', '.join(failed)}] conf={confidence:.3f}{ml_info} prob={signal['probability']:.3f}")
+                                        elif state.bot_state["scan_count"] % 5 == 0:
                                             logger.info(f"Signal rejected {symbol} {signal_side}: failed [{', '.join(failed)}] conf={confidence:.3f}{ml_info}")
                                         continue
                                     kraken_order_id = None
