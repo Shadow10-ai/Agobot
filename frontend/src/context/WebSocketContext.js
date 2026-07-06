@@ -15,7 +15,11 @@
  */
 import { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Derive WebSocket URL from current page location so it works behind any proxy
+function getWsBase() {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}`;
+}
 
 const WebSocketContext = createContext({ lastMessage: null, connected: false });
 
@@ -38,7 +42,7 @@ export function WebSocketProvider({ children }) {
       wsRef.current.close();
     }
 
-    const wsUrl = BACKEND_URL.replace(/^http/, "ws") + `/api/ws?token=${encodeURIComponent(token)}`;
+    const wsUrl = getWsBase() + `/api/ws?token=${encodeURIComponent(token)}`;
 
     let ws;
     try {
