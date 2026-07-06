@@ -123,7 +123,7 @@ export default function ConfigPage({ user, onLogout }) {
       setBinanceKeys({ api_key: "", api_secret: "" });
       if (res.data.connected) {
         toast.success(res.data.message);
-        setConnTestResult({ ok: true, message: res.data.message });
+        setConnTestResult({ connected: true, message: res.data.message, balance: res.data.balance });
       } else {
         const errMsg = res.data.error || res.data.message || "Connection failed";
         toast.error(errMsg);
@@ -141,7 +141,7 @@ export default function ConfigPage({ user, onLogout }) {
     setConnTestResult(null);
     try {
       const res = await api.get("/bot/binance-test");
-      setConnTestResult(res.data);
+      setConnTestResult({ connected: res.data.connected, message: res.data.message, error: res.data.error, balance: res.data.balance });
       setModeInfo((prev) => ({ ...prev, binance_connected: res.data.connected }));
       if (res.data.connected) {
         toast.success(res.data.message);
@@ -319,18 +319,37 @@ export default function ConfigPage({ user, onLogout }) {
           </div>
 
           {/* Connection test result */}
-          {connTestResult && (
+          {connTestResult && !connTestResult.connected && (
             <div
               data-testid="conn-test-result"
-              className={`mt-3 px-3 py-2 rounded text-[11px] font-mono border ${
-                connTestResult.connected
-                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-                  : "bg-red-500/10 border-red-500/20 text-red-400"
-              }`}
+              className="mt-3 px-3 py-2 rounded text-[11px] font-mono border bg-red-500/10 border-red-500/20 text-red-400"
             >
-              {connTestResult.connected
-                ? `✓ ${connTestResult.message}`
-                : `✗ ${connTestResult.error}`}
+              ✗ {connTestResult.error}
+            </div>
+          )}
+          {connTestResult && connTestResult.connected && (
+            <div data-testid="conn-test-result" className="mt-3 rounded border border-emerald-500/20 bg-emerald-500/5 overflow-hidden">
+              <div className="px-3 py-2 border-b border-emerald-500/15 flex items-center gap-2">
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-[11px] font-semibold text-emerald-400">{connTestResult.message}</span>
+              </div>
+              {connTestResult.balance && connTestResult.balance.holdings && connTestResult.balance.holdings.length > 0 ? (
+                <div className="p-3">
+                  <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-2">Account Snapshot</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                    {connTestResult.balance.holdings.map((h) => (
+                      <div key={h.currency} className="flex items-center justify-between bg-black/30 rounded px-2.5 py-1.5">
+                        <span className="text-[11px] font-bold text-zinc-300 font-mono">{h.currency}</span>
+                        <span className="text-[11px] text-zinc-400 font-mono ml-3">{h.total.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : connTestResult.balance && connTestResult.balance.error ? (
+                <p className="px-3 py-2 text-[10px] text-zinc-500">Balance unavailable: {connTestResult.balance.error}</p>
+              ) : (
+                <p className="px-3 py-2 text-[10px] text-zinc-500">No assets found in account.</p>
+              )}
             </div>
           )}
         </div>

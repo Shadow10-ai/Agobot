@@ -81,6 +81,32 @@ async def close_binance_client():
     logger.info("Kraken client closed")
 
 
+async def get_account_balance() -> dict:
+    """Fetch account balance from Kraken and return clean non-zero holdings."""
+    import asyncio
+    exchange = state.binance_client
+    if not exchange:
+        return {"error": "Not connected"}
+    try:
+        raw = await asyncio.wait_for(exchange.fetch_balance(), timeout=15.0)
+        totals = raw.get("total", {})
+        # Filter dust (< 0.00001) and known meta-keys
+        _skip = {"info", "free", "used", "total", "datetime", "timestamp"}
+        holdings = [
+            {"currency": k, "total": round(float(v), 8)}
+            for k, v in totals.items()
+            if k not in _skip and float(v or 0) >= 0.00001
+        ]
+        # Sort: fiat first (USD/USDT/EUR), then by size
+        fiat = {"USD", "USDT", "EUR", "GBP", "ZUSD", "ZEUR", "ZGBP"}
+        holdings.sort(key=lambda h: (0 if h["currency"] in fiat else 1, -h["total"]))
+        return {"holdings": holdings[:15]}
+    except asyncio.TimeoutError:
+        return {"error": "Balance fetch timed out"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 async def fetch_live_price(symbol: str) -> float:
     """Fetch real-time price from Kraken."""
     exchange = state.binance_client

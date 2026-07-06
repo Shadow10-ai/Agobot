@@ -94,15 +94,19 @@ async def update_exchange_keys(data: ExchangeKeysUpdate, user=Depends(get_curren
     )
     state.binance_keys["api_key"] = data.api_key
     state.binance_keys["api_secret"] = data.api_secret
-    from services.binance_service import init_binance_client
+    from services.binance_service import init_binance_client, get_account_balance
     error = await init_binance_client(data.api_key, data.api_secret)
     connected = state.binance_client is not None
     key_preview = f"****{data.api_key[-4:]}" if len(data.api_key) > 4 else "****"
+    balance = None
+    if connected:
+        balance = await get_account_balance()
     return {
         "connected": connected,
         "api_key_preview": key_preview,
         "message": "Kraken client connected successfully!" if connected else f"Connection failed: {error}",
         "error": error if not connected else None,
+        "balance": balance,
     }
 
 
@@ -181,14 +185,18 @@ async def test_exchange_connection(user=Depends(get_current_user)):
     secret = (config.get("binance_api_secret") or KRAKEN_API_SECRET or state.binance_keys.get("api_secret", ""))
     if not key or not secret:
         return {"connected": False, "error": "No API keys configured. Add them in Settings."}
-    from services.binance_service import init_binance_client
+    from services.binance_service import init_binance_client, get_account_balance
     error = await init_binance_client(key, secret)
     connected = state.binance_client is not None
+    balance = None
+    if connected:
+        balance = await get_account_balance()
     return {
         "connected": connected,
         "can_trade": connected,
         "message": "Connected to Kraken successfully!" if connected else None,
         "error": error if not connected else None,
+        "balance": balance,
     }
 
 
