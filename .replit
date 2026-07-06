@@ -52,9 +52,23 @@ waitForPort = 8000
 outputType = "console"
 
 [[ports]]
+localPort = 3000
+externalPort = 3000
+
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
 localPort = 5000
 externalPort = 80
 
 [[ports]]
 localPort = 8000
 externalPort = 8000
+exposeLocalhost = true
+
+[deployment]
+deploymentTarget = "vm"
+run = ["bash", "-c", "cd backend && uvicorn server:app --host 0.0.0.0 --port 5000"]
+build = ["bash", "-c", "cd frontend && npm install --legacy-peer-deps && npm run build"]
