@@ -9,7 +9,6 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-REACT_APP_BACKEND_URL = "https://0261b218-e6c7-4faf-8263-16a16865b4f1-00-1scavshpfditd.riker.replit.dev"
 
 [workflows]
 runButton = "Project"
