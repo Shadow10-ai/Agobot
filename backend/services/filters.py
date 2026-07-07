@@ -147,7 +147,7 @@ def increment_cooldown():
 
 
 def multi_timeframe_trend(candles, side):
-    """Check if trade direction aligns with higher timeframe trend."""
+    """Check if trade direction aligns with higher timeframe trend (same-TF structural check)."""
     if not candles or len(candles) < 30:
         return True, "INSUFFICIENT_DATA"
     short_closes = [c['close'] for c in candles[-10:]]
@@ -166,6 +166,59 @@ def multi_timeframe_trend(candles, side):
     else:
         aligned = htf_trend in ("BEARISH", "MIXED")
     return aligned, htf_trend
+
+
+def check_htf_trend(htf_candles: list, side: str) -> tuple:
+    """Gate entry direction against the real 15-minute EMA(21)/EMA(50) trend.
+
+    Uses actual 15m candles (LIVE) or a longer synthetic window (DRY).
+    Returns (aligned: bool, htf_bias: str).
+    htf_bias values: BULLISH | NEUTRAL_BULL | NEUTRAL | NEUTRAL_BEAR | BEARISH | INSUFFICIENT
+    """
+    if not htf_candles or len(htf_candles) < 55:
+        return True, "INSUFFICIENT"
+    closes = [c["close"] for c in htf_candles]
+    ema21 = ema(closes, 21)
+    ema50 = ema(closes, 50)
+    if not ema21 or not ema50:
+        return True, "INSUFFICIENT"
+    prev_closes = closes[:-3]
+    prev_ema21 = ema(prev_closes, 21) if len(prev_closes) >= 21 else None
+    if ema21 > ema50:
+        htf_bias = "BULLISH" if (prev_ema21 and ema21 > prev_ema21) else "NEUTRAL_BULL"
+    elif ema21 < ema50:
+        htf_bias = "BEARISH" if (prev_ema21 and ema21 < prev_ema21) else "NEUTRAL_BEAR"
+    else:
+        htf_bias = "NEUTRAL"
+    if side == "LONG":
+        aligned = htf_bias in ("BULLISH", "NEUTRAL_BULL", "NEUTRAL")
+    else:
+        aligned = htf_bias in ("BEARISH", "NEUTRAL_BEAR", "NEUTRAL")
+    return aligned, htf_bias
+
+
+async def check_orderflow_bias(symbol: str, side: str) -> tuple:
+    """Gate trade direction against live order-book pressure.
+
+    STRONG_SELL pressure blocks LONG entries; STRONG_BUY blocks SHORT entries.
+    In DRY / simulated mode the check is informational only — never hard-blocks.
+    Returns (aligned: bool, pressure: str, source: str).
+    """
+    from services.market_intel import analyze_order_book
+    try:
+        data = await analyze_order_book(symbol, limit=50)
+        pressure = data.get("pressure", "NEUTRAL")
+        source = data.get("source", "simulated")
+        if source == "simulated":
+            return True, pressure, source
+        if side == "LONG" and pressure == "STRONG_SELL":
+            return False, pressure, source
+        if side == "SHORT" and pressure == "STRONG_BUY":
+            return False, pressure, source
+        return True, pressure, source
+    except Exception as e:
+        logger.warning(f"Order flow check failed for {symbol}: {e}")
+        return True, "NEUTRAL", "error"
 
 
 def check_risk_reward(entry, sl, tp, side, min_rr=2.5):
@@ -198,8 +251,9 @@ async def check_overtrade_limits(db_ref, config):
     return hour_ok and day_ok, trades_last_hour, max_per_hour, trades_today, max_per_day
 
 
-def calculate_confidence_score(signal, candles, config):
-    """Composite confidence score combining technical probability, volume, regime, and trend."""
+def calculate_confidence_score(signal, candles, config, order_pressure: str = "NEUTRAL", htf_bias: str = "NEUTRAL"):
+    """Composite confidence score combining technical probability, volume, regime, trend,
+    order-flow pressure, and higher-timeframe EMA bias."""
     tech_prob = signal["probability"]
     vol_score = min(1.0, signal.get("volume_ratio", 0.5) / 2.0) if signal.get("volume_passes") else 0.2
     regime = signal.get("volatility_regime", "NORMAL")
@@ -216,12 +270,25 @@ def calculate_confidence_score(signal, candles, config):
         reward = abs(entry - tp)
     rr = reward / risk if risk > 0 else 0
     rr_score = min(1.0, rr / 3.0)
+    # Order-flow pressure score (LONG prefers buy pressure; SHORT prefers sell pressure)
+    pressure_raw = {"STRONG_BUY": 1.0, "BUY": 0.75, "NEUTRAL": 0.5, "SELL": 0.25, "STRONG_SELL": 0.0}
+    flow_raw = pressure_raw.get(order_pressure, 0.5)
+    flow_score = flow_raw if side == "LONG" else (1.0 - flow_raw)
+    # Higher-timeframe EMA bias score
+    htf_bias_scores = {
+        "BULLISH": 1.0, "NEUTRAL_BULL": 0.75, "NEUTRAL": 0.5, "INSUFFICIENT": 0.5,
+        "NEUTRAL_BEAR": 0.25, "BEARISH": 0.0,
+    }
+    htf_raw = htf_bias_scores.get(htf_bias, 0.5)
+    htf_score = htf_raw if side == "LONG" else (1.0 - htf_raw)
     confidence = (
-        tech_prob * 0.30 +
-        vol_score * 0.15 +
-        regime_score * 0.15 +
-        trend_score * 0.25 +
-        rr_score * 0.15
+        tech_prob  * 0.25 +
+        vol_score  * 0.12 +
+        regime_score * 0.12 +
+        trend_score  * 0.20 +
+        rr_score     * 0.13 +
+        flow_score   * 0.10 +
+        htf_score    * 0.08
     )
     return round(confidence, 4), {
         "technical": round(tech_prob, 4),
@@ -229,6 +296,10 @@ def calculate_confidence_score(signal, candles, config):
         "regime": round(regime_score, 4),
         "trend_alignment": round(trend_score, 4),
         "risk_reward": round(rr_score, 4),
+        "order_flow": round(flow_score, 4),
+        "htf_bias": round(htf_score, 4),
         "htf_trend": htf,
-        "rr_ratio": round(rr, 2)
+        "htf_15m_bias": htf_bias,
+        "order_pressure": order_pressure,
+        "rr_ratio": round(rr, 2),
     }
