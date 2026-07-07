@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
-import { Save, RotateCcw, AlertTriangle, Check, Settings, Bell, Shield, Zap, Key, Wifi, WifiOff } from "lucide-react";
+import { Save, RotateCcw, AlertTriangle, Check, Settings, Bell, Shield, Zap, Key, Wifi, WifiOff, X, Rocket, Brain, Activity } from "lucide-react";
 import { toast } from "sonner";
 
 const InputField = ({ label, name, value, onChange, type = "number", step, min, max, description }) => (
@@ -34,15 +34,21 @@ export default function ConfigPage({ user, onLogout }) {
   const [modeInfo, setModeInfo] = useState({ mode: "DRY", binance_connected: false, binance_keys_configured: false, api_key_preview: "" });
   const [showLiveConfirm, setShowLiveConfirm] = useState(false);
   const [switchingMode, setSwitchingMode] = useState(false);
+  const [mlStatus, setMlStatus] = useState(null);
+  const [circuitBreaker, setCircuitBreaker] = useState(null);
 
   const fetchConfig = useCallback(async () => {
     try {
-      const [configRes, modeRes] = await Promise.all([
+      const [configRes, modeRes, mlRes, cbRes] = await Promise.all([
         api.get("/bot/config"),
-        api.get("/bot/mode")
+        api.get("/bot/mode"),
+        api.get("/ml/status"),
+        api.get("/risk/circuit-breaker"),
       ]);
       setConfig(configRes.data);
       setModeInfo(modeRes.data);
+      setMlStatus(mlRes.data);
+      setCircuitBreaker(cbRes.data);
       setTelegram({
         telegram_token: configRes.data.telegram_token || "",
         telegram_chat_id: configRes.data.telegram_chat_id || ""
@@ -206,6 +212,42 @@ export default function ConfigPage({ user, onLogout }) {
 
   const isLive = modeInfo.mode === "LIVE";
 
+  // Pre-flight readiness checks
+  const checks = [
+    {
+      id: "exchange",
+      icon: Key,
+      label: "Kraken API connected",
+      description: modeInfo.binance_connected
+        ? `Key ${modeInfo.api_key_preview} is live and authenticated`
+        : "Save your API key and secret in the Exchange Connection section above",
+      pass: modeInfo.binance_connected,
+    },
+    {
+      id: "ml",
+      icon: Brain,
+      label: "ML model trained",
+      description: mlStatus
+        ? mlStatus.labeled_signals >= 30
+          ? `${mlStatus.labeled_signals} labeled trades — model active (accuracy ${mlStatus.accuracy > 0 ? (mlStatus.accuracy * 100).toFixed(0) + "%" : "training..."})`
+          : `${mlStatus.labeled_signals}/30 labeled trades needed — keep running DRY mode`
+        : "Loading…",
+      pass: mlStatus ? mlStatus.labeled_signals >= 30 : false,
+    },
+    {
+      id: "circuit",
+      icon: Activity,
+      label: "Circuit breaker healthy",
+      description: circuitBreaker
+        ? circuitBreaker.tripped
+          ? `Tripped at ${circuitBreaker.drawdown_at_trip?.toFixed(1)}% drawdown — reset it before going LIVE`
+          : `Current drawdown ${circuitBreaker.current_drawdown?.toFixed(2)}% — within the ${circuitBreaker.max_drawdown_threshold}% limit`
+        : "Loading…",
+      pass: circuitBreaker ? !circuitBreaker.tripped : false,
+    },
+  ];
+  const allReady = checks.every((c) => c.pass);
+
   return (
     <AppLayout user={user} onLogout={onLogout}>
       <div className="p-5 lg:p-8 space-y-6" data-testid="config-page">
@@ -354,6 +396,75 @@ export default function ConfigPage({ user, onLogout }) {
           )}
         </div>
 
+        {/* Pre-flight Checklist */}
+        <div
+          data-testid="preflight-checklist"
+          className={`rounded-lg border p-5 ${
+            allReady
+              ? "bg-emerald-500/5 border-emerald-500/20"
+              : isLive
+              ? "bg-zinc-800/30 border-white/5"
+              : "bg-zinc-800/30 border-white/5"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Rocket className="w-4 h-4 text-zinc-400" />
+              <h3 className="text-sm font-semibold">LIVE Mode Pre-flight</h3>
+            </div>
+            <span
+              className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold tracking-wider flex items-center gap-1 ${
+                allReady
+                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                  : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+              }`}
+            >
+              {allReady ? <Check className="w-2.5 h-2.5" /> : <AlertTriangle className="w-2.5 h-2.5" />}
+              {allReady ? "READY FOR LIVE" : "NOT READY"}
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            {checks.map((c) => {
+              const Icon = c.icon;
+              return (
+                <div
+                  key={c.id}
+                  className={`flex items-start gap-3 rounded px-3 py-2.5 border ${
+                    c.pass
+                      ? "bg-emerald-500/5 border-emerald-500/15"
+                      : "bg-red-500/5 border-red-500/10"
+                  }`}
+                >
+                  <div className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${c.pass ? "bg-emerald-500/20" : "bg-red-500/20"}`}>
+                    {c.pass
+                      ? <Check className="w-3 h-3 text-emerald-400" />
+                      : <X className="w-3 h-3 text-red-400" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Icon className="w-3 h-3 text-zinc-500 flex-shrink-0" />
+                      <span className={`text-xs font-semibold ${c.pass ? "text-zinc-200" : "text-zinc-300"}`}>{c.label}</span>
+                    </div>
+                    <p className={`text-[11px] mt-0.5 leading-relaxed ${c.pass ? "text-zinc-500" : "text-zinc-500"}`}>{c.description}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {!allReady && !isLive && (
+            <p className="mt-3 text-[10px] text-zinc-600 leading-relaxed">
+              Complete all checks above before switching to LIVE. The LIVE button will unlock automatically.
+            </p>
+          )}
+          {allReady && !isLive && (
+            <p className="mt-3 text-[10px] text-emerald-600 leading-relaxed">
+              All systems go. You can safely enable LIVE trading from the section below.
+            </p>
+          )}
+        </div>
+
         {/* Trading Mode Toggle */}
         <div
           data-testid="mode-toggle-section"
@@ -417,7 +528,7 @@ export default function ConfigPage({ user, onLogout }) {
               <button
                 data-testid="mode-live-btn"
                 onClick={() => handleModeToggle("LIVE")}
-                disabled={isLive || switchingMode || !modeInfo.binance_keys_configured}
+                disabled={isLive || switchingMode || !allReady}
                 className={`h-8 px-4 rounded-sm text-xs font-medium transition-colors ${
                   isLive
                     ? "bg-red-500/20 text-red-400 border border-red-500/40"
