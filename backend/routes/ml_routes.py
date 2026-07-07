@@ -43,6 +43,20 @@ async def trigger_ml_training(user=Depends(get_current_user)):
     return {"message": "ML model training started", "status": "TRAINING"}
 
 
+@router.post("/ml/seed")
+async def seed_ml_dataset(user=Depends(get_current_user)):
+    """Seed the ML dataset from closed trades. Returns current dataset stats."""
+    from services.ml_service import seed_dataset_from_trades
+    await seed_dataset_from_trades(db)
+    total = await db.signal_dataset.count_documents({})
+    labeled = await db.signal_dataset.count_documents({"outcome": {"$in": ["WIN", "LOSS"]}})
+    return {
+        "message": "Dataset seeded from trade history",
+        "total_signals": total,
+        "labeled_signals": labeled,
+    }
+
+
 @router.get("/ml/dataset")
 async def get_dataset(limit: int = 100, user=Depends(get_current_user)):
     docs = await db.signal_dataset.find(

@@ -230,9 +230,9 @@ export default function DashboardPage({ user, onLogout }) {
       return {
         ...prev,
         bot_status: lastMessage.bot,
-        positions: lastMessage.positions,
-        open_positions_count: lastMessage.positions.length,
-        prices: lastMessage.prices,
+        positions: lastMessage.positions ?? prev.positions,
+        open_positions_count: (lastMessage.positions ?? prev.positions ?? []).length,
+        prices: lastMessage.prices ?? prev.prices,
       };
     });
   }, [lastMessage]);

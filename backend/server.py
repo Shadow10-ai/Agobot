@@ -59,6 +59,12 @@ api_prefix = "/api"
 for router in [auth_router, bot_router, trading_router, backtest_router, ml_router, risk_router, market_intel_router, misc_router, ws_router]:
     app.include_router(router, prefix=api_prefix)
 
+# Serve React production build — only mounted if the build directory exists (i.e. after `npm run build`)
+_static_dir = ROOT_DIR.parent / "frontend" / "build"
+if _static_dir.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="static")
+
 
 @app.on_event("startup")
 async def startup_event():
