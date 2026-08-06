@@ -221,6 +221,25 @@ async def check_orderflow_bias(symbol: str, side: str) -> tuple:
         return True, "NEUTRAL", "error"
 
 
+def check_candle_quality(candles: list, min_body_ratio: float = 0.30) -> tuple:
+    """Reject doji and wick-dominated candles — signal candle must have a real body.
+
+    Returns (passes: bool, body_ratio: float).
+    A body_ratio < min_body_ratio means the candle is mostly wick (indecision / fakeout risk).
+    """
+    if not candles:
+        return True, 1.0
+    c = candles[-1]
+    hi, lo = c.get("high", 0), c.get("low", 0)
+    op, cl = c.get("open", 0), c.get("close", 0)
+    full_range = hi - lo
+    if full_range <= 0:
+        return True, 1.0
+    body = abs(cl - op)
+    ratio = body / full_range
+    return ratio >= min_body_ratio, round(ratio, 4)
+
+
 def check_risk_reward(entry, sl, tp, side, min_rr=2.5):
     """Enforce minimum risk/reward ratio."""
     if side == "LONG":

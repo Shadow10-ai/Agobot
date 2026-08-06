@@ -12,7 +12,7 @@ from services.filters import (
     check_correlation_exposure, check_spread, estimate_slippage,
     check_min_liquidity, check_risk_reward, multi_timeframe_trend,
     check_cooldown, check_overtrade_limits, calculate_confidence_score,
-    update_cooldown, increment_cooldown
+    update_cooldown, increment_cooldown, check_orderflow_bias, check_candle_quality,
 )
 from services.ml_service import ml_predict, log_signal_to_dataset, update_dataset_outcome
 from services.risk_service import check_circuit_breaker, check_trading_session, detect_market_regime_advanced
@@ -94,6 +94,63 @@ async def bot_scan_loop():
                 current_price = state.SYMBOL_PRICES.get(symbol, pos["entry_price"])
                 exit_reason = None
                 exit_price = current_price
+                # ── Partial take-profit at 50% of TP distance ──────────────────────
+                if not pos.get("partial_tp_done") and not exit_reason:
+                    entry_p = pos["entry_price"]
+                    tp_p = pos["take_profit"]
+                    tp50 = entry_p + 0.5 * (tp_p - entry_p) if pos_side == "LONG" else entry_p - 0.5 * (entry_p - tp_p)
+                    hit_tp50 = (current_price >= tp50) if pos_side == "LONG" else (current_price <= tp50)
+                    if hit_tp50:
+                        half_qty = pos["quantity"] / 2.0
+                        if pos_side == "LONG":
+                            partial_pnl = (current_price - entry_p) * half_qty
+                        else:
+                            partial_pnl = (entry_p - current_price) * half_qty
+                        if pos.get("mode") == "LIVE":
+                            fee = (entry_p + current_price) * half_qty * KRAKEN_TAKER_FEE
+                            partial_pnl -= fee
+                            # Place live close for half
+                            if is_live:
+                                try:
+                                    close_side = "SELL" if pos_side == "LONG" else "BUY"
+                                    await place_live_market_order(symbol, close_side, half_qty * current_price)
+                                except Exception as e:
+                                    logger.error(f"LIVE partial-TP close failed for {symbol}: {e}")
+                        partial_pnl = round(partial_pnl, 4)
+                        now_pt = datetime.now(timezone.utc).isoformat()
+                        # Record partial close as a trade
+                        await db.trades.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "symbol": symbol,
+                            "side": pos_side,
+                            "entry_price": entry_p,
+                            "exit_price": round(current_price, 8),
+                            "quantity": round(half_qty, 8),
+                            "pnl": partial_pnl,
+                            "pnl_percent": round((partial_pnl / (entry_p * half_qty)) * 100, 4) if entry_p * half_qty > 0 else 0,
+                            "exit_reason": "PARTIAL_TP",
+                            "opened_at": pos["opened_at"],
+                            "closed_at": now_pt,
+                            "mode": pos.get("mode", "DRY"),
+                        })
+                        # Move SL to breakeven, halve quantity
+                        await db.positions.update_one(
+                            {"id": pos["id"]},
+                            {"$set": {
+                                "quantity": round(half_qty, 8),
+                                "stop_loss": round(entry_p, 8),  # breakeven
+                                "partial_tp_done": True,
+                                "partial_tp_price": round(current_price, 8),
+                            }}
+                        )
+                        await db.bot_state.update_one(
+                            {"key": "daily_pnl"}, {"$inc": {"value": partial_pnl}}, upsert=True
+                        )
+                        logger.info(f"[{pos.get('mode','DRY')}] Partial TP {symbol}: closed 50% @ {current_price:.6f}, PnL {partial_pnl:.4f}, SL → breakeven")
+                        # Refresh pos dict so SL/TP checks below use updated values
+                        pos = {**pos, "quantity": round(half_qty, 8), "stop_loss": round(entry_p, 8), "partial_tp_done": True}
+
+                # ── Full SL / TP exit ───────────────────────────────────────────────
                 if pos_side == "LONG":
                     if current_price <= pos["stop_loss"]:
                         exit_reason = "STOP_LOSS"
@@ -296,6 +353,12 @@ async def bot_scan_loop():
                                     filters_passed["risk_reward"] = rr_ok
                                     if not rr_ok:
                                         all_pass = False
+                                    # Candle quality — reject doji / wick-heavy bars
+                                    cq_ok, body_ratio = check_candle_quality(candles_used, min_body_ratio=0.30)
+                                    filters_passed["candle_quality"] = cq_ok
+                                    if not cq_ok:
+                                        all_pass = False
+                                    htf_trend = "NEUTRAL"
                                     if config.get("require_trend_alignment", True):
                                         trend_ok, htf_trend = multi_timeframe_trend(candles_used, signal_side)
                                         filters_passed["trend_alignment"] = trend_ok
@@ -303,7 +366,16 @@ async def bot_scan_loop():
                                             all_pass = False
                                     else:
                                         filters_passed["trend_alignment"] = True
-                                    confidence, conf_breakdown = calculate_confidence_score(signal, candles_used, config)
+                                    # Order-flow bias (async; non-blocking in DRY mode)
+                                    _of_ok, order_pressure, _of_src = await check_orderflow_bias(symbol, signal_side)
+                                    filters_passed["order_flow"] = _of_ok
+                                    if not _of_ok:
+                                        all_pass = False
+                                    confidence, conf_breakdown = calculate_confidence_score(
+                                        signal, candles_used, config,
+                                        order_pressure=order_pressure,
+                                        htf_bias=htf_trend,
+                                    )
                                     min_conf = config.get("min_confidence_score", 0.60)
                                     filters_passed["confidence"] = confidence >= min_conf
                                     if confidence < min_conf:
