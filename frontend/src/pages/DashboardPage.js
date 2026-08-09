@@ -16,6 +16,9 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   X as CloseIcon,
+  Brain,
+  AlertTriangle,
+  CheckCircle,
 } from "lucide-react";
 import {
   AreaChart,
@@ -192,9 +195,72 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
+const MLHealthCard = ({ ml }) => {
+  if (!ml) return null;
+  const isActive = ml.status === "ACTIVE";
+  const isLearning = ml.status === "LEARNING";
+  const overfitWarn = ml.overfit_warning;
+  const trainAcc = ml.accuracy != null ? (ml.accuracy * 100).toFixed(1) : null;
+  const testAcc = ml.test_accuracy != null ? (ml.test_accuracy * 100).toFixed(1) : null;
+  const samples = ml.training_data?.total_samples ?? ml.training_samples ?? 0;
+  const needed = ml.min_samples_required ?? 30;
+  const pct = Math.min(100, Math.round((samples / needed) * 100));
+
+  return (
+    <div
+      data-testid="ml-health-card"
+      className={`p-4 rounded-lg border flex items-start gap-3 ${
+        overfitWarn
+          ? "bg-amber-500/5 border-amber-500/20"
+          : isActive
+          ? "bg-purple-500/5 border-purple-500/20"
+          : "bg-zinc-800/40 border-white/5"
+      }`}
+    >
+      <div className={`mt-0.5 flex-shrink-0 ${overfitWarn ? "text-amber-400" : isActive ? "text-purple-400" : "text-zinc-500"}`}>
+        {overfitWarn ? <AlertTriangle className="w-4 h-4" /> : isActive ? <CheckCircle className="w-4 h-4" /> : <Brain className="w-4 h-4" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-semibold text-zinc-200">ML Model</span>
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full tracking-wider ${
+            isActive ? "bg-purple-500/20 text-purple-400" :
+            isLearning ? "bg-yellow-500/20 text-yellow-400" :
+            "bg-zinc-500/20 text-zinc-400"
+          }`}>{ml.status}</span>
+          {overfitWarn && (
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400">OVERFIT</span>
+          )}
+        </div>
+
+        {isActive ? (
+          <div className="flex items-center gap-3 text-[10px] font-mono">
+            <span className="text-zinc-500">Train <span className="text-purple-300">{trainAcc}%</span></span>
+            {testAcc && <span className="text-zinc-500">Test <span className={overfitWarn ? "text-amber-400" : "text-emerald-400"}>{testAcc}%</span></span>}
+            <span className="text-zinc-500">{samples} samples</span>
+          </div>
+        ) : (
+          <div>
+            <div className="text-[10px] text-zinc-500 mb-1.5">{samples}/{needed} labeled trades</div>
+            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-full bg-yellow-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        )}
+
+        {overfitWarn && (
+          <p className="text-[10px] text-amber-400/80 mt-1">Model may be memorising — more trades needed to generalise.</p>
+        )}
+      </div>
+      <a href="/ml" className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0 mt-0.5">Details →</a>
+    </div>
+  );
+};
+
 export default function DashboardPage({ user, onLogout }) {
   const [dashboard, setDashboard] = useState(null);
   const [performance, setPerformance] = useState(null);
+  const [mlStatus, setMlStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [botLoading, setBotLoading] = useState(false);
   const intervalRef = useRef(null);
@@ -202,12 +268,14 @@ export default function DashboardPage({ user, onLogout }) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [dashRes, perfRes] = await Promise.all([
+      const [dashRes, perfRes, mlRes] = await Promise.all([
         api.get("/dashboard"),
         api.get("/performance"),
+        api.get("/ml/status"),
       ]);
       setDashboard(dashRes.data);
       setPerformance(perfRes.data);
+      setMlStatus(mlRes.data);
     } catch (err) {
       console.error('Dashboard fetch failed:', err?.message || err);
     } finally {
@@ -224,17 +292,28 @@ export default function DashboardPage({ user, onLogout }) {
 
   // WebSocket: live-update positions, prices, bot status on every scan (~10s)
   useEffect(() => {
-    if (!lastMessage || lastMessage.type !== "scan_update") return;
-    setDashboard((prev) => {
-      if (!prev) return prev;
-      return {
+    if (!lastMessage) return;
+    if (lastMessage.type === "scan_update") {
+      setDashboard((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          bot_status: lastMessage.bot,
+          positions: lastMessage.positions ?? prev.positions,
+          open_positions_count: (lastMessage.positions ?? prev.positions ?? []).length,
+          prices: lastMessage.prices ?? prev.prices,
+        };
+      });
+    }
+    if (lastMessage.type === "ml_update") {
+      setMlStatus((prev) => prev ? {
         ...prev,
-        bot_status: lastMessage.bot,
-        positions: lastMessage.positions ?? prev.positions,
-        open_positions_count: (lastMessage.positions ?? prev.positions ?? []).length,
-        prices: lastMessage.prices ?? prev.prices,
-      };
-    });
+        status: lastMessage.status ?? prev.status,
+        accuracy: lastMessage.accuracy ?? prev.accuracy,
+        training_data: { ...prev.training_data, total_samples: lastMessage.training_samples ?? prev.training_data?.total_samples },
+        version: lastMessage.version ?? prev.version,
+      } : prev);
+    }
   }, [lastMessage]);
 
   const handleBotAction = async (action) => {
@@ -409,6 +488,9 @@ export default function DashboardPage({ user, onLogout }) {
             color="#F59E0B"
           />
         </div>
+
+        {/* ML Health Card */}
+        <MLHealthCard ml={mlStatus} />
 
         {/* Main Grid */}
         <div className="grid grid-cols-12 gap-4">

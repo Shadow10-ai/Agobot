@@ -79,3 +79,7 @@ build = ["bash", "-c", "cd frontend && npm install --legacy-peer-deps && npm run
 
 [objectStorage]
 defaultBucketID = "replit-objstore-1cd54f6d-a9dc-4b4e-8012-aa72ffda5a73"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 60000
