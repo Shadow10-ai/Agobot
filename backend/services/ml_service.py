@@ -51,6 +51,59 @@ async def train_ml_model(db_ref):
             state.ml_model_state["training_samples"] = len(labeled)
             logger.info(f"ML: Only {len(labeled)} labeled samples (need {ML_MIN_SAMPLES}). Staying in LEARNING mode.")
             return
+        # ── Symbol concentration warning ──────────────────────────────────────
+        symbol_counts = {}
+        for doc in labeled:
+            sym = doc.get("symbol", "UNKNOWN")
+            symbol_counts[sym] = symbol_counts.get(sym, 0) + 1
+        total_labeled = len(labeled)
+        dominant_symbol, dominant_count = max(symbol_counts.items(), key=lambda x: x[1])
+        dominant_pct = dominant_count / total_labeled
+        if dominant_pct > 0.5:
+            logger.warning(
+                f"ML SYMBOL CONCENTRATION: {dominant_symbol} accounts for "
+                f"{dominant_count}/{total_labeled} ({dominant_pct:.0%}) of training samples — "
+                f"model may be learning symbol-specific patterns rather than generalising"
+            )
+
+        # ── Deduplicate near-identical rows ───────────────────────────────────
+        # Rows that share symbol + RSI bucket (±5) + trading session are near-duplicates
+        # that can inflate CV accuracy without adding real information.
+        def _session(doc):
+            """Map UTC hour to a coarse trading session label."""
+            try:
+                hour = datetime.fromisoformat(doc.get("timestamp", "")).hour
+            except Exception:
+                hour = 12
+            if hour < 8:
+                return "ASIAN"
+            elif hour < 13:
+                return "LONDON"
+            elif hour < 18:
+                return "NEWYORK"
+            else:
+                return "OFFHOURS"
+
+        seen_keys = set()
+        deduped = []
+        for doc in labeled:
+            rsi = doc.get("rsi", 50)
+            rsi_bucket = int(round(rsi / 5.0)) * 5  # round to nearest 5
+            key = (doc.get("symbol", ""), rsi_bucket, _session(doc), doc.get("side", "LONG"))
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped.append(doc)
+        removed = total_labeled - len(deduped)
+        if removed > 0:
+            logger.info(f"ML dedup: removed {removed} near-duplicate rows ({total_labeled} → {len(deduped)})")
+        labeled = deduped
+
+        if len(labeled) < ML_MIN_SAMPLES:
+            state.ml_model_state["status"] = "LEARNING"
+            state.ml_model_state["training_samples"] = len(labeled)
+            logger.info(f"ML: After dedup only {len(labeled)} samples (need {ML_MIN_SAMPLES}). Staying in LEARNING mode.")
+            return
+
         X, y = [], []
         for doc in labeled:
             features = extract_ml_features(doc)
@@ -60,7 +113,7 @@ async def train_ml_model(db_ref):
         X = np.array(X, dtype=np.float32)
         y = np.array(y, dtype=np.int32)
         import pandas as pd
-        from sklearn.model_selection import cross_val_score, train_test_split
+        from sklearn.model_selection import TimeSeriesSplit, train_test_split
         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
         X_df = pd.DataFrame(X, columns=ALL_ML_FEATURES)
@@ -121,10 +174,21 @@ async def train_ml_model(db_ref):
                 f"gap={overfit_gap:.3f} — model may be memorising training data"
             )
 
-        # ── Step 2: Cross-validation on full dataset ──────────────────────────
+        # ── Step 2: Cross-validation on full dataset (temporal order) ────────
+        # TimeSeriesSplit ensures each fold trains on the past and validates on
+        # the future — preventing the model from "peeking" at later data, which
+        # inflates accuracy with random k-fold on time-ordered financial data.
         n_folds = min(5, max(2, len(y) // 10))
+        tscv = TimeSeriesSplit(n_splits=n_folds)
         cv_model = lgb.LGBMClassifier(**base_params, scale_pos_weight=full_scale_pos)
-        cv_scores = cross_val_score(cv_model, X_df, y, cv=n_folds, scoring="accuracy")
+        cv_scores = []
+        for train_idx, val_idx in tscv.split(X_df):
+            X_cv_train, X_cv_val = X_df.iloc[train_idx], X_df.iloc[val_idx]
+            y_cv_train, y_cv_val = y[train_idx], y[val_idx]
+            cv_model.fit(X_cv_train, y_cv_train)
+            fold_preds = cv_model.predict(X_cv_val)
+            cv_scores.append(accuracy_score(y_cv_val, fold_preds))
+        cv_scores = np.array(cv_scores)
 
         # ── Step 3: Deployment model — refit on full dataset for best coverage ──
         # Metrics (acc, test_acc, overfit_warning) already captured from eval model.
