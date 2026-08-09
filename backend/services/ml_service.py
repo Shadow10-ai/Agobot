@@ -231,12 +231,30 @@ async def log_signal_to_dataset(db_ref, signal, candles, confidence, confidence_
 
 
 async def update_dataset_outcome(db_ref, symbol, side, entry_price, pnl, pnl_pct, exit_reason, opened_at):
-    """Update the signal dataset entry with trade outcome for ML training."""
+    """Update the signal dataset entry with trade outcome for ML training.
+
+    The signal is logged *before* the position opens, so its timestamp is always
+    earlier than `opened_at`. We match within a 10-minute look-back window.
+    """
+    from datetime import timedelta
     outcome = "WIN" if pnl > 0 else "LOSS"
-    await db_ref.signal_dataset.update_one(
-        {"symbol": symbol, "side": side, "trade_taken": True, "outcome": None, "timestamp": {"$gte": opened_at}},
+    try:
+        opened_dt = datetime.fromisoformat(opened_at)
+    except Exception:
+        opened_dt = datetime.now(timezone.utc)
+    window_start = (opened_dt - timedelta(minutes=10)).isoformat()
+    result = await db_ref.signal_dataset.update_one(
+        {
+            "symbol": symbol,
+            "side": side,
+            "trade_taken": True,
+            "outcome": None,
+            "timestamp": {"$gte": window_start, "$lte": opened_at},
+        },
         {"$set": {"outcome": outcome, "pnl": pnl, "pnl_percent": pnl_pct, "exit_reason": exit_reason}},
     )
+    if result.matched_count == 0:
+        logger.warning(f"update_dataset_outcome: no signal_dataset match for {symbol} {side} opened_at={opened_at}")
     state.ml_model_state["trades_since_retrain"] += 1
     if state.ml_model_state["trades_since_retrain"] >= ML_RETRAIN_INTERVAL:
         asyncio.create_task(train_ml_model(db_ref))
