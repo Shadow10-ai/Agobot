@@ -493,6 +493,28 @@ async def bot_scan_loop():
                                     break
             state.bot_state["scan_count"] += 1
             state.bot_state["last_scan"] = datetime.now(timezone.utc).isoformat()
+            # ── Outcome-matcher health check (every 50 scans) ──────────────────
+            # Counts signal_dataset entries where a trade was taken but the outcome
+            # was never labeled. More than 5 records older than 30 minutes is a
+            # strong indicator that update_dataset_outcome() is broken again.
+            if state.bot_state["scan_count"] % 50 == 0:
+                try:
+                    from datetime import timedelta
+                    stale_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+                    stale_count = await db.signal_dataset.count_documents({
+                        "trade_taken": True,
+                        "outcome": None,
+                        "timestamp": {"$lte": stale_cutoff},
+                    })
+                    if stale_count > 5:
+                        logger.warning(
+                            f"ML OUTCOME HEALTH: {stale_count} trade(s) with trade_taken=True "
+                            f"and outcome=None older than 30 min — outcome matcher may be broken."
+                        )
+                    else:
+                        logger.info(f"ML OUTCOME HEALTH: {stale_count} stale unlabeled trade(s) (threshold=5) — OK")
+                except Exception as _hc_err:
+                    logger.warning(f"ML outcome health check failed: {_hc_err}")
             if state.bot_state["scan_count"] % 3 == 0:
                 price_snapshot = {
                     "timestamp": datetime.now(timezone.utc).isoformat(),
