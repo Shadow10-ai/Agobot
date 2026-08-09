@@ -183,6 +183,143 @@ const TradeRow = ({ trade }) => {
   );
 };
 
+const MLHealthCard = ({ mlStatus }) => {
+  if (!mlStatus) return null;
+  const isActive = mlStatus.status === "ACTIVE";
+  const isLearning = mlStatus.status === "LEARNING";
+  const isTraining = mlStatus.status === "TRAINING";
+  const overfit = mlStatus.overfit_warning;
+
+  const top3Features = mlStatus.feature_importance
+    ? Object.entries(mlStatus.feature_importance).slice(0, 3)
+    : [];
+  const maxImp = top3Features.length > 0 ? Math.max(...top3Features.map(([, v]) => v)) : 1;
+
+  return (
+    <div
+      data-testid="ml-health-card"
+      className="bg-[#121212] border border-white/5 rounded-lg p-5"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Brain className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-semibold">ML Model Health</span>
+        </div>
+        <span
+          data-testid="ml-health-status-badge"
+          className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider border ${
+            isActive
+              ? "bg-purple-500/20 text-purple-400 border-purple-500/30"
+              : isTraining
+              ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
+              : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+          }`}
+        >
+          {mlStatus.status}
+          {mlStatus.version > 0 && ` v${mlStatus.version}`}
+        </span>
+      </div>
+
+      {/* Overfit warning */}
+      {overfit && (
+        <div
+          data-testid="ml-overfit-warning"
+          className="flex items-center gap-2 mb-3 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/20"
+        >
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+          <span className="text-[11px] text-amber-400">
+            Overfit detected — train accuracy significantly higher than CV score
+          </span>
+        </div>
+      )}
+
+      {/* Metrics grid */}
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <div className="bg-[#0A0A0A] border border-white/5 rounded-md p-3">
+          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Samples</p>
+          <p className="text-lg font-bold font-mono mt-0.5 text-white">
+            {mlStatus.training_samples ?? 0}
+          </p>
+          {isActive && (
+            <p className="text-[10px] text-zinc-600 mt-0.5">
+              {mlStatus.wins_in_training ?? 0}W / {mlStatus.losses_in_training ?? 0}L
+            </p>
+          )}
+        </div>
+        <div className="bg-[#0A0A0A] border border-white/5 rounded-md p-3">
+          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Accuracy</p>
+          {isActive ? (
+            <>
+              <p className={`text-lg font-bold font-mono mt-0.5 ${overfit ? "text-amber-400" : "text-purple-400"}`}>
+                {((mlStatus.accuracy ?? 0) * 100).toFixed(1)}%
+              </p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">
+                CV {((mlStatus.cv_score ?? 0) * 100).toFixed(1)}%
+              </p>
+            </>
+          ) : (
+            <p className="text-lg font-bold font-mono mt-0.5 text-zinc-500">—</p>
+          )}
+        </div>
+      </div>
+
+      {/* Feature importance top-3 */}
+      {isActive && top3Features.length > 0 && (
+        <div className="mb-4">
+          <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">Top Features</p>
+          <div className="space-y-1.5">
+            {top3Features.map(([feat, imp]) => (
+              <div key={feat}>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[10px] text-zinc-400 font-mono truncate max-w-[130px]">{feat}</span>
+                  <span className="text-[10px] text-purple-400 font-mono">{imp}</span>
+                </div>
+                <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500/60 rounded-full"
+                    style={{ width: `${maxImp > 0 ? (imp / maxImp) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Last trained */}
+      <div className="pt-3 border-t border-white/5">
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="text-zinc-600">Last trained</span>
+          <span className="font-mono text-zinc-400">
+            {mlStatus.last_trained
+              ? new Date(mlStatus.last_trained).toLocaleString()
+              : isLearning
+              ? "Collecting data…"
+              : "Never"}
+          </span>
+        </div>
+        {isLearning && (
+          <div className="mt-2">
+            <div className="flex justify-between text-[10px] mb-1">
+              <span className="text-zinc-600">Progress to activation</span>
+              <span className="font-mono text-yellow-400">
+                {mlStatus.training_samples ?? 0} / {mlStatus.total_signals_logged > 0 ? "30" : "30"}
+              </span>
+            </div>
+            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-yellow-500/60 rounded-full transition-all"
+                style={{ width: `${Math.min(100, ((mlStatus.training_samples ?? 0) / 30) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -195,67 +332,6 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
-const MLHealthCard = ({ ml }) => {
-  if (!ml) return null;
-  const isActive = ml.status === "ACTIVE";
-  const isLearning = ml.status === "LEARNING";
-  const overfitWarn = ml.overfit_warning;
-  const trainAcc = ml.accuracy != null ? (ml.accuracy * 100).toFixed(1) : null;
-  const testAcc = ml.test_accuracy != null ? (ml.test_accuracy * 100).toFixed(1) : null;
-  const samples = ml.training_data?.total_samples ?? ml.training_samples ?? 0;
-  const needed = ml.min_samples_required ?? 30;
-  const pct = Math.min(100, Math.round((samples / needed) * 100));
-
-  return (
-    <div
-      data-testid="ml-health-card"
-      className={`p-4 rounded-lg border flex items-start gap-3 ${
-        overfitWarn
-          ? "bg-amber-500/5 border-amber-500/20"
-          : isActive
-          ? "bg-purple-500/5 border-purple-500/20"
-          : "bg-zinc-800/40 border-white/5"
-      }`}
-    >
-      <div className={`mt-0.5 flex-shrink-0 ${overfitWarn ? "text-amber-400" : isActive ? "text-purple-400" : "text-zinc-500"}`}>
-        {overfitWarn ? <AlertTriangle className="w-4 h-4" /> : isActive ? <CheckCircle className="w-4 h-4" /> : <Brain className="w-4 h-4" />}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-semibold text-zinc-200">ML Model</span>
-          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full tracking-wider ${
-            isActive ? "bg-purple-500/20 text-purple-400" :
-            isLearning ? "bg-yellow-500/20 text-yellow-400" :
-            "bg-zinc-500/20 text-zinc-400"
-          }`}>{ml.status}</span>
-          {overfitWarn && (
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400">OVERFIT</span>
-          )}
-        </div>
-
-        {isActive ? (
-          <div className="flex items-center gap-3 text-[10px] font-mono">
-            <span className="text-zinc-500">Train <span className="text-purple-300">{trainAcc}%</span></span>
-            {testAcc && <span className="text-zinc-500">Test <span className={overfitWarn ? "text-amber-400" : "text-emerald-400"}>{testAcc}%</span></span>}
-            <span className="text-zinc-500">{samples} samples</span>
-          </div>
-        ) : (
-          <div>
-            <div className="text-[10px] text-zinc-500 mb-1.5">{samples}/{needed} labeled trades</div>
-            <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-              <div className="h-full bg-yellow-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
-            </div>
-          </div>
-        )}
-
-        {overfitWarn && (
-          <p className="text-[10px] text-amber-400/80 mt-1">Model may be memorising — more trades needed to generalise.</p>
-        )}
-      </div>
-      <a href="/ml" className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors flex-shrink-0 mt-0.5">Details →</a>
-    </div>
-  );
-};
 
 export default function DashboardPage({ user, onLogout }) {
   const [dashboard, setDashboard] = useState(null);
@@ -304,15 +380,9 @@ export default function DashboardPage({ user, onLogout }) {
           prices: lastMessage.prices ?? prev.prices,
         };
       });
-    }
-    if (lastMessage.type === "ml_update") {
-      setMlStatus((prev) => prev ? {
-        ...prev,
-        status: lastMessage.status ?? prev.status,
-        accuracy: lastMessage.accuracy ?? prev.accuracy,
-        training_data: { ...prev.training_data, total_samples: lastMessage.training_samples ?? prev.training_data?.total_samples },
-        version: lastMessage.version ?? prev.version,
-      } : prev);
+    } else if (lastMessage.type === "ml_update") {
+      // Refresh full ML status from server on model retrain
+      api.get("/ml/status").then((res) => setMlStatus(res.data)).catch(() => {});
     }
   }, [lastMessage]);
 
@@ -489,9 +559,6 @@ export default function DashboardPage({ user, onLogout }) {
           />
         </div>
 
-        {/* ML Health Card */}
-        <MLHealthCard ml={mlStatus} />
-
         {/* Main Grid */}
         <div className="grid grid-cols-12 gap-4">
           {/* PnL Chart */}
@@ -574,36 +641,42 @@ export default function DashboardPage({ user, onLogout }) {
             </div>
           </div>
 
-          {/* Active Positions */}
-          <div
-            className="col-span-12 lg:col-span-4 space-y-3"
-            data-testid="positions-panel"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Active Positions</h3>
-              <span className="text-xs text-zinc-600 font-mono">
-                {positions.length} open
-              </span>
-            </div>
-            {positions.length > 0 ? (
-              <div className="space-y-3 stagger-children">
-                {positions.map((pos) => (
-                  <PositionCard
-                    key={pos.id}
-                    position={pos}
-                    onClose={handleClosePosition}
-                  />
-                ))}
+          {/* Right column: ML Health + Active Positions */}
+          <div className="col-span-12 lg:col-span-4 space-y-4">
+            {/* ML Health Card */}
+            <MLHealthCard mlStatus={mlStatus} />
+
+            {/* Active Positions */}
+            <div
+              className="space-y-3"
+              data-testid="positions-panel"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Active Positions</h3>
+                <span className="text-xs text-zinc-600 font-mono">
+                  {positions.length} open
+                </span>
               </div>
-            ) : (
-              <div className="p-8 bg-[#121212] border border-white/5 rounded-lg text-center">
-                <Activity className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
-                <div className="text-sm text-zinc-500">No open positions</div>
-                <div className="text-xs text-zinc-700 mt-1">
-                  Bot is scanning for entry signals
+              {positions.length > 0 ? (
+                <div className="space-y-3 stagger-children">
+                  {positions.map((pos) => (
+                    <PositionCard
+                      key={pos.id}
+                      position={pos}
+                      onClose={handleClosePosition}
+                    />
+                  ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="p-8 bg-[#121212] border border-white/5 rounded-lg text-center">
+                  <Activity className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
+                  <div className="text-sm text-zinc-500">No open positions</div>
+                  <div className="text-xs text-zinc-700 mt-1">
+                    Bot is scanning for entry signals
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
