@@ -234,6 +234,10 @@ async def bot_scan_loop():
                         "take_profit": pos["take_profit"],
                         "entry_order_id": pos.get("kraken_order_id"),
                         "exit_order_id": close_order_id,
+                        # ML decision data — lets the UI show how the model influenced this trade
+                        "confidence_score": pos.get("confidence_score"),
+                        "ml_win_probability": pos.get("ml_win_probability"),
+                        "ml_prediction": pos.get("ml_prediction"),
                     }
                     await db.trades.insert_one(trade_doc)
                     await db.bot_state.update_one(

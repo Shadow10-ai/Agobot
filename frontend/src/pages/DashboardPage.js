@@ -139,6 +139,8 @@ const PositionCard = ({ position, onClose }) => {
 
 const TradeRow = ({ trade }) => {
   const isWin = trade.pnl > 0;
+  const mlPct = trade.ml_win_probability != null ? Math.round(trade.ml_win_probability * 100) : null;
+  const mlColor = mlPct == null ? "" : mlPct >= 60 ? "text-emerald-400" : mlPct >= 50 ? "text-yellow-400" : "text-[#FF2E5B]";
   return (
     <tr
       data-testid={`trade-row-${trade.id}`}
@@ -159,26 +161,27 @@ const TradeRow = ({ trade }) => {
         ${trade.exit_price?.toFixed(2)}
       </td>
       <td className="py-2.5 px-3">
-        <span
-          className={`font-mono text-xs font-medium ${isWin ? "text-[#00F090]" : "text-[#FF2E5B]"}`}
-        >
-          {isWin ? "+" : ""}
-          {trade.pnl?.toFixed(2)}
+        <span className={`font-mono text-xs font-medium ${isWin ? "text-[#00F090]" : "text-[#FF2E5B]"}`}>
+          {isWin ? "+" : ""}{trade.pnl?.toFixed(2)}
         </span>
       </td>
       <td className="py-2.5 px-3">
-        <span
-          className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-            trade.exit_reason === "TAKE_PROFIT"
-              ? "bg-[#00F090]/10 text-[#00F090]"
-              : trade.exit_reason === "STOP_LOSS"
-                ? "bg-[#FF2E5B]/10 text-[#FF2E5B]"
-                : "bg-zinc-500/10 text-zinc-400"
-          }`}
-        >
+        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+            trade.exit_reason === "TAKE_PROFIT" ? "bg-[#00F090]/10 text-[#00F090]"
+            : trade.exit_reason === "STOP_LOSS" ? "bg-[#FF2E5B]/10 text-[#FF2E5B]"
+            : trade.exit_reason === "PARTIAL_TP" ? "bg-blue-500/10 text-blue-400"
+            : "bg-zinc-500/10 text-zinc-400"
+          }`}>
           {trade.exit_reason}
         </span>
       </td>
+      {mlPct != null && (
+        <td className="py-2.5 px-3">
+          <span className={`font-mono text-[10px] font-medium ${mlColor}`}>
+            ML {mlPct}%
+          </span>
+        </td>
+      )}
     </tr>
   );
 };

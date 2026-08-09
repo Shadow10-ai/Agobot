@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/App";
 import { AppLayout } from "@/components/AppLayout";
-import { Download, Search, Filter, RefreshCw } from "lucide-react";
+import { Download, Filter, RefreshCw, Brain } from "lucide-react";
 import { toast } from "sonner";
 
 const PAGE_LIMIT = 20;
@@ -21,7 +21,7 @@ export default function TradesPage({ user, onLogout }) {
       setTrades(res.data.trades || []);
       setTotal(res.data.total || 0);
     } catch (err) {
-      console.error('Trades fetch failed:', err?.message || err);
+      console.error("Trades fetch failed:", err?.message || err);
     } finally {
       setLoading(false);
     }
@@ -36,11 +36,12 @@ export default function TradesPage({ user, onLogout }) {
       toast.error("No trades to export");
       return;
     }
-    const headers = "Symbol,Side,Entry,Exit,Qty,PnL,PnL%,Reason,Opened,Closed\n";
+    const headers = "Symbol,Side,Entry,Exit,PnL,PnL%,ML Win%,Confidence,Reason,Opened,Closed\n";
     const rows = trades
       .map(
         (t) =>
-          `${t.symbol},${t.side},${t.entry_price},${t.exit_price},${t.quantity},${t.pnl},${t.pnl_percent},${t.exit_reason},${t.opened_at},${t.closed_at}`
+          `${t.symbol},${t.side},${t.entry_price},${t.exit_price},${t.pnl},${t.pnl_percent},` +
+          `${t.ml_win_probability ?? ""},${t.confidence_score ?? ""},${t.exit_reason},${t.opened_at},${t.closed_at}`
       )
       .join("\n");
     const blob = new Blob([headers + rows], { type: "text/csv" });
@@ -62,9 +63,7 @@ export default function TradesPage({ user, onLogout }) {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Trade History</h1>
-            <p className="text-sm text-zinc-500 mt-1">
-              {total} total trades recorded
-            </p>
+            <p className="text-sm text-zinc-500 mt-1">{total} total trades recorded</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -109,15 +108,13 @@ export default function TradesPage({ user, onLogout }) {
               <RefreshCw className="w-5 h-5 text-blue-500 animate-spin mx-auto" />
             </div>
           ) : trades.length === 0 ? (
-            <div className="p-16 text-center text-sm text-zinc-600">
-              No trades found
-            </div>
+            <div className="p-16 text-center text-sm text-zinc-600">No trades found</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full" data-testid="trades-table">
                 <thead>
                   <tr className="border-b border-white/5">
-                    {["Symbol", "Side", "Entry", "Exit", "Qty", "PnL", "PnL %", "Reason", "Time"].map((h) => (
+                    {["Symbol", "Side", "Entry", "Exit", "PnL", "PnL %", "ML Score", "Reason", "Time"].map((h) => (
                       <th
                         key={h}
                         className="py-3 px-4 text-left text-[10px] font-semibold text-zinc-500 uppercase tracking-wider"
@@ -128,63 +125,73 @@ export default function TradesPage({ user, onLogout }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {trades.map((t) => (
-                    <tr
-                      key={t.id}
-                      data-testid={`history-trade-${t.id}`}
-                      className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
-                    >
-                      <td className="py-3 px-4 text-xs font-bold">{t.symbol}</td>
-                      <td className="py-3 px-4">
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
-                          {t.side}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-mono text-xs">
-                        ${t.entry_price?.toFixed(2)}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-xs">
-                        ${t.exit_price?.toFixed(2)}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-xs text-zinc-400">
-                        {t.quantity?.toFixed(6)}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`font-mono text-xs font-medium ${t.pnl > 0 ? "text-[#00F090]" : "text-[#FF2E5B]"}`}
-                        >
-                          {t.pnl > 0 ? "+" : ""}
-                          ${t.pnl?.toFixed(2)}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`font-mono text-xs ${t.pnl_percent > 0 ? "text-[#00F090]" : "text-[#FF2E5B]"}`}
-                        >
-                          {t.pnl_percent > 0 ? "+" : ""}
-                          {t.pnl_percent?.toFixed(2)}%
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                            t.exit_reason === "TAKE_PROFIT"
-                              ? "bg-[#00F090]/10 text-[#00F090]"
-                              : t.exit_reason === "STOP_LOSS"
-                                ? "bg-[#FF2E5B]/10 text-[#FF2E5B]"
-                                : t.exit_reason === "TRAIL_STOP"
-                                  ? "bg-purple-500/10 text-purple-400"
-                                  : "bg-zinc-500/10 text-zinc-400"
-                          }`}
-                        >
-                          {t.exit_reason}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-xs text-zinc-500">
-                        {t.closed_at ? new Date(t.closed_at).toLocaleString() : "-"}
-                      </td>
-                    </tr>
-                  ))}
+                  {trades.map((t) => {
+                    const mlPct = t.ml_win_probability != null ? Math.round(t.ml_win_probability * 100) : null;
+                    const mlColor =
+                      mlPct == null ? ""
+                      : mlPct >= 60 ? "text-emerald-400"
+                      : mlPct >= 50 ? "text-yellow-400"
+                      : "text-[#FF2E5B]";
+                    const confPct = t.confidence_score != null ? Math.round(t.confidence_score * 100) : null;
+                    return (
+                      <tr
+                        key={t.id}
+                        data-testid={`history-trade-${t.id}`}
+                        className="border-b border-white/5 hover:bg-white/[0.02] transition-colors"
+                      >
+                        <td className="py-3 px-4 text-xs font-bold">{t.symbol}</td>
+                        <td className="py-3 px-4">
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                            t.side === "SHORT" ? "bg-orange-500/10 text-orange-400" : "bg-blue-500/10 text-blue-400"
+                          }`}>
+                            {t.side}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-mono text-xs">${t.entry_price?.toFixed(2)}</td>
+                        <td className="py-3 px-4 font-mono text-xs">${t.exit_price?.toFixed(2)}</td>
+                        <td className="py-3 px-4">
+                          <span className={`font-mono text-xs font-medium ${t.pnl > 0 ? "text-[#00F090]" : "text-[#FF2E5B]"}`}>
+                            {t.pnl > 0 ? "+" : ""}${t.pnl?.toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`font-mono text-xs ${t.pnl_percent > 0 ? "text-[#00F090]" : "text-[#FF2E5B]"}`}>
+                            {t.pnl_percent > 0 ? "+" : ""}{t.pnl_percent?.toFixed(2)}%
+                          </span>
+                        </td>
+                        {/* ML Score — win probability + composite confidence */}
+                        <td className="py-3 px-4">
+                          {mlPct != null ? (
+                            <div className="flex items-center gap-1.5">
+                              <Brain className="w-3 h-3 text-purple-500 flex-shrink-0" />
+                              <div>
+                                <div className={`font-mono text-xs font-medium ${mlColor}`}>{mlPct}%</div>
+                                {confPct != null && (
+                                  <div className="text-[9px] text-zinc-600 font-mono">conf {confPct}%</div>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-zinc-700">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                            t.exit_reason === "TAKE_PROFIT" ? "bg-[#00F090]/10 text-[#00F090]"
+                            : t.exit_reason === "STOP_LOSS" ? "bg-[#FF2E5B]/10 text-[#FF2E5B]"
+                            : t.exit_reason === "TRAIL_STOP" ? "bg-purple-500/10 text-purple-400"
+                            : t.exit_reason === "PARTIAL_TP" ? "bg-blue-500/10 text-blue-400"
+                            : "bg-zinc-500/10 text-zinc-400"
+                          }`}>
+                            {t.exit_reason}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-xs text-zinc-500">
+                          {t.closed_at ? new Date(t.closed_at).toLocaleString() : "-"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

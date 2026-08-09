@@ -104,6 +104,24 @@ async def get_trades(limit: int = 50, skip: int = 0, symbol: Optional[str] = Non
         query["symbol"] = symbol
     trades = await db.trades.find(query, {"_id": 0}).sort("closed_at", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.trades.count_documents(query)
+
+    # Enrich older trades that pre-date ML field storage by looking up the
+    # matching closed position (joined on opened_at which is stable per position).
+    old_trades = [t for t in trades if t.get("ml_win_probability") is None and t.get("opened_at")]
+    if old_trades:
+        opened_ats = [t["opened_at"] for t in old_trades]
+        positions = await db.positions.find(
+            {"opened_at": {"$in": opened_ats}, "status": "CLOSED"},
+            {"_id": 0, "opened_at": 1, "ml_win_probability": 1, "ml_prediction": 1, "confidence_score": 1}
+        ).to_list(len(opened_ats))
+        pos_map = {p["opened_at"]: p for p in positions}
+        for trade in old_trades:
+            pos = pos_map.get(trade["opened_at"])
+            if pos:
+                trade["ml_win_probability"] = pos.get("ml_win_probability")
+                trade["ml_prediction"] = pos.get("ml_prediction")
+                trade["confidence_score"] = pos.get("confidence_score")
+
     return {"trades": trades, "total": total}
 
 
