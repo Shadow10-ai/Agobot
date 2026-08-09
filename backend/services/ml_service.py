@@ -60,37 +60,95 @@ async def train_ml_model(db_ref):
         X = np.array(X, dtype=np.float32)
         y = np.array(y, dtype=np.int32)
         import pandas as pd
+        from sklearn.model_selection import cross_val_score, train_test_split
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
         X_df = pd.DataFrame(X, columns=ALL_ML_FEATURES)
-        wins = int(np.sum(y))
-        losses = len(y) - wins
-        scale_pos = losses / max(wins, 1)
-        model = lgb.LGBMClassifier(
+
+        # ── Train/test split first — before any class-weight calculations ─────
+        # Stratified split requires at least 2 samples per class; fall back to
+        # a sequential split when the dataset is too small or too imbalanced.
+        test_size = 0.2
+        unique_classes, class_counts = np.unique(y, return_counts=True)
+        can_stratify = len(unique_classes) >= 2 and np.all(class_counts >= 2)
+        if can_stratify and len(y) >= ML_MIN_SAMPLES * 2:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_df, y, test_size=test_size, random_state=42, stratify=y
+            )
+        else:
+            split_idx = max(1, int(len(y) * (1 - test_size)))
+            X_train = X_df.iloc[:split_idx]
+            X_test = X_df.iloc[split_idx:]
+            y_train = y[:split_idx]
+            y_test = y[split_idx:]
+
+        # Class weights derived independently per partition so no label leakage
+        train_wins = int(np.sum(y_train))
+        train_losses = len(y_train) - train_wins
+        train_scale_pos = train_losses / max(train_wins, 1)
+
+        full_wins = int(np.sum(y))
+        full_losses = len(y) - full_wins
+        full_scale_pos = full_losses / max(full_wins, 1)
+
+        base_params = dict(
             n_estimators=100,
-            max_depth=5,
+            max_depth=4,
             learning_rate=0.05,
-            min_child_samples=max(3, len(y) // 20),
-            scale_pos_weight=scale_pos,
+            min_child_samples=max(5, len(y) // 15),
+            reg_alpha=0.1,
+            reg_lambda=0.1,
             verbose=-1,
             random_state=42,
         )
-        from sklearn.model_selection import cross_val_score
+
+        # ── Step 1: Evaluation model — trained on X_train only ──────────────
+        # scale_pos_weight from y_train; X_test rows never touch this fit.
+        eval_model = lgb.LGBMClassifier(**base_params, scale_pos_weight=train_scale_pos)
+        eval_model.fit(X_train, y_train)
+
+        train_preds = eval_model.predict(X_train)
+        acc = accuracy_score(y_train, train_preds)   # in-sample on training partition
+
+        test_preds_eval = eval_model.predict(X_test)
+        test_acc = accuracy_score(y_test, test_preds_eval)  # genuinely held-out
+
+        overfit_gap = acc - test_acc
+        overfit_warning = overfit_gap > 0.15
+        if overfit_warning:
+            logger.warning(
+                f"ML OVERFIT WARNING: train_acc={acc:.3f} test_acc={test_acc:.3f} "
+                f"gap={overfit_gap:.3f} — model may be memorising training data"
+            )
+
+        # ── Step 2: Cross-validation on full dataset ──────────────────────────
         n_folds = min(5, max(2, len(y) // 10))
-        cv_scores = cross_val_score(model, X_df, y, cv=n_folds, scoring="accuracy")
+        cv_model = lgb.LGBMClassifier(**base_params, scale_pos_weight=full_scale_pos)
+        cv_scores = cross_val_score(cv_model, X_df, y, cv=n_folds, scoring="accuracy")
+
+        # ── Step 3: Deployment model — refit on full dataset for best coverage ──
+        # Metrics (acc, test_acc, overfit_warning) already captured from eval model.
+        model = lgb.LGBMClassifier(**base_params, scale_pos_weight=full_scale_pos)
         model.fit(X_df, y)
+
         importances = model.feature_importances_
         feature_imp = {name: round(float(imp), 4) for name, imp in zip(ALL_ML_FEATURES, importances)}
         feature_imp = dict(sorted(feature_imp.items(), key=lambda x: -x[1])[:10])
-        preds = model.predict(X_df)
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-        acc = accuracy_score(y, preds)
-        prec = precision_score(y, preds, zero_division=0)
-        rec = recall_score(y, preds, zero_division=0)
-        f1 = f1_score(y, preds, zero_division=0)
+
+        # Precision/recall/F1 from the deployment model on full data (informational)
+        full_preds = model.predict(X_df)
+        wins = full_wins
+        losses = full_losses
+        prec = precision_score(y, full_preds, zero_division=0)
+        rec = recall_score(y, full_preds, zero_division=0)
+        f1 = f1_score(y, full_preds, zero_division=0)
+
         joblib.dump(model, ML_MODEL_PATH)
         state.ml_model_state.update({
             "model": model,
             "status": "ACTIVE",
             "accuracy": round(acc, 4),
+            "test_accuracy": round(test_acc, 4),
             "precision": round(prec, 4),
             "recall": round(rec, 4),
             "f1": round(f1, 4),
@@ -101,9 +159,13 @@ async def train_ml_model(db_ref):
             "last_trained": datetime.now(timezone.utc).isoformat(),
             "feature_importance": feature_imp,
             "version": state.ml_model_state["version"] + 1,
+            "overfit_warning": overfit_warning,
         })
-        logger.info(f"ML Model trained v{state.ml_model_state['version']}: {len(y)} samples, "
-                    f"acc={acc:.3f}, prec={prec:.3f}, rec={rec:.3f}, f1={f1:.3f}, cv={np.mean(cv_scores):.3f}")
+        logger.info(
+            f"ML Model trained v{state.ml_model_state['version']}: {len(y)} samples, "
+            f"train_acc={acc:.3f}, test_acc={test_acc:.3f}, gap={overfit_gap:.3f}, "
+            f"prec={prec:.3f}, rec={rec:.3f}, f1={f1:.3f}, cv={np.mean(cv_scores):.3f}"
+        )
         # Notify connected WebSocket clients that ML model just updated
         try:
             from services.websocket_manager import ws_manager

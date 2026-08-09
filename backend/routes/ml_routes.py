@@ -17,6 +17,8 @@ async def get_ml_status(user=Depends(get_current_user)):
     return {
         "status": state.ml_model_state["status"],
         "accuracy": state.ml_model_state["accuracy"],
+        "test_accuracy": state.ml_model_state["test_accuracy"],
+        "overfit_warning": state.ml_model_state["overfit_warning"],
         "precision": state.ml_model_state["precision"],
         "recall": state.ml_model_state["recall"],
         "f1": state.ml_model_state["f1"],

@@ -33,6 +33,7 @@ ml_model_state = {
     "model": None,
     "status": "LEARNING",
     "accuracy": 0.0,
+    "test_accuracy": 0.0,
     "precision": 0.0,
     "recall": 0.0,
     "f1": 0.0,
@@ -44,6 +45,7 @@ ml_model_state = {
     "trades_since_retrain": 0,
     "feature_importance": {},
     "version": 0,
+    "overfit_warning": False,
 }
 
 # Binance async client (reassigned — use `import state; state.binance_client = ...`)
